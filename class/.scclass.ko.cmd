@@ -1,0 +1,1 @@
+cmd_/home/cjok/device_driver/module/class/scclass.ko := ld -r -m elf_i386 -T /home/cjok/arm6410/linux-2.6.36.4/scripts/module-common.lds --build-id  -o /home/cjok/device_driver/module/class/scclass.ko /home/cjok/device_driver/module/class/scclass.o /home/cjok/device_driver/module/class/scclass.mod.o
