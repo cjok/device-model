@@ -1,1 +1,0 @@
-cmd_/home/cjok/device_driver/module/driver-2/scdriver.ko := ld -r -m elf_i386 -T /home/cjok/arm6410/linux-2.6.36.4/scripts/module-common.lds --build-id  -o /home/cjok/device_driver/module/driver-2/scdriver.ko /home/cjok/device_driver/module/driver-2/scdriver.o /home/cjok/device_driver/module/driver-2/scdriver.mod.o

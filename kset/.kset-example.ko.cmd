@@ -1,1 +1,0 @@
-cmd_/home/cjok/device_driver/module/kset-2/kset-example.ko := ld -r -m elf_i386 -T /home/cjok/arm6410/linux-2.6.36.4/scripts/module-common.lds --build-id  -o /home/cjok/device_driver/module/kset-2/kset-example.ko /home/cjok/device_driver/module/kset-2/kset-example.o /home/cjok/device_driver/module/kset-2/kset-example.mod.o
