@@ -47,7 +47,7 @@ static int __init scdevice_init(void)
 	if (ret)
 		goto err_create;
 	
-	device_create(scclass, &scbus, 0, 0, "scdevice0");
+	device_create(scclass, NULL, 0, 0, "scdevice0");
 
 	printk("Create a scdevice");
 	return 0;
