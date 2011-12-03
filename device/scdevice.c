@@ -59,6 +59,7 @@ err_create:
 
 static void __exit scdevice_exit(void)
 {
+	device_destroy(scclass, 0);
 	device_remove_file(&scdevice, &dev_attr_version);
 	device_unregister(&scdevice);
 	printk("Remove a scdevice");
