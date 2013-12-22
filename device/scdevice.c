@@ -22,6 +22,8 @@ struct device scdevice = {
 	.init_name	= "scdevice0",
 	.bus	= &scbus_type,
 	.release	= screlease,
+	.devt = ((250 << 20) | 3),	//define devno, create device node file
+								//under /dev/
 };
 
 /*
