@@ -1,0 +1,160 @@
+Index: kernel/drivers/power/qpnp-charger.c
+===================================================================
+--- kernel/drivers/power/qpnp-charger.c	(revision 8223)
++++ kernel/drivers/power/qpnp-charger.c	(revision 8224)
+@@ -4544,6 +4544,64 @@
+ 	return rc;
+ }
+ 
++//liaoye@dump register for debug, start
++//#define QPNP_DUMP_REGISTER
++#ifdef 	QPNP_DUMP_REGISTER
++struct qpnp_chg_chip *chip_temp = NULL;
++
++struct chg_register {
++	u16 reg_addr;
++	u8	value;
++};
++#define DEFAULT_VALUE	0x0
++static struct chg_register cr[]= {
++	{0x1010, DEFAULT_VALUE},
++	{0x1008, DEFAULT_VALUE},
++	{0x100b, DEFAULT_VALUE},
++	{0x1044, DEFAULT_VALUE},
++	{0x1049, DEFAULT_VALUE},
++	{0x104b, DEFAULT_VALUE},
++	{0x1050, DEFAULT_VALUE},
++	{0x1052, DEFAULT_VALUE},
++	{0x1054, DEFAULT_VALUE},
++	{0x105f, DEFAULT_VALUE},
++	{0x1064, DEFAULT_VALUE},
++	{0x10d0, DEFAULT_VALUE},
++	{0x10ee, DEFAULT_VALUE},
++	{0x1208, DEFAULT_VALUE},
++	{0x1309, DEFAULT_VALUE},
++	{0x1310, DEFAULT_VALUE},
++	{0x1343, DEFAULT_VALUE},
++	{0x1344, DEFAULT_VALUE},
++	{0x1351, DEFAULT_VALUE},
++	{0x140a, DEFAULT_VALUE},
++	{0x1642, DEFAULT_VALUE},
++	{0x1110, DEFAULT_VALUE},
++	{0x1209, DEFAULT_VALUE},
++	{0x1210, DEFAULT_VALUE},
++	{0x1249, DEFAULT_VALUE},
++};
++
++static ssize_t show_dump_register(struct device *dev, 
++			struct device_attribute *attr, char *buf)
++{
++	int n;
++	char str_buf[20]={0};
++	char temp_buf[512] = {0};
++
++	for (n = 0; n < ARRAY_SIZE(cr); n++) {
++		qpnp_chg_read(chip_temp, &cr[n].value, cr[n].reg_addr, 1);
++		memset(str_buf, '\0', sizeof(str_buf));
++		sprintf(str_buf, "0x%x[0x%x], ", cr[n].reg_addr, cr[n].value);
++		strcat(temp_buf, str_buf);
++	}
++
++	return sprintf(buf, "%s\n", temp_buf);
++}
++DEVICE_ATTR(dump_register, 0666, show_dump_register, NULL);
++#endif
++//liaoye@dump register for debug, end
++
+ static int __devinit
+ qpnp_charger_probe(struct spmi_device *spmi)
+ {
+@@ -4804,6 +4862,13 @@
+ 			qpnp_bat_if_adc_measure_work);
+ 		INIT_WORK(&chip->adc_disable_work,
+ 			qpnp_bat_if_adc_disable_work);
++//liaoye@dump register for debug, start
++#ifdef QPNP_DUMP_REGISTER
++		chip_temp = chip;
++		device_create_file(chip->batt_psy.dev, &dev_attr_dump_register);
++#endif
++//liaoye@dump register for debug, end
++
+ 	}
+ 
+ 	INIT_DELAYED_WORK(&chip->eoc_work, qpnp_eoc_work);
+@@ -4943,6 +5008,10 @@
+ 	cancel_delayed_work_sync(&chip->temp_check_work);	//liaoye@add
+ #endif
+ 	cancel_delayed_work_sync(&chip->eoc_work);
++//liaoye@dump register for debug
++#ifdef QPNP_DUMP_REGISTER
++	device_remove_file(chip->batt_psy.dev, &dev_attr_dump_register);
++#endif
+ 	cancel_work_sync(&chip->adc_disable_work);
+ 	cancel_work_sync(&chip->adc_measure_work);
+ 	power_supply_unregister(&chip->batt_psy);
+Index: system/core/charger/charger.c
+===================================================================
+--- system/core/charger/charger.c	(revision 8223)
++++ system/core/charger/charger.c	(revision 8224)
+@@ -762,6 +762,49 @@
+     gr_text(x, y, cap_str, 0);
+ }
+ 
++//liaoye@add for debug in shutdown charing, start
++//#define SDC_DEBUG
++#ifdef	SDC_DEBUG
++#define LINE_SIZE	40
++static void sdc_debug(struct charger *charger)
++{
++    char cap_str[1024];
++    int x, y;
++    int str_len_px;
++    int str_len_char;
++	int present;	//battery present if or not
++	int online;	//whether in charging
++	int voltage;	//charging voltage
++	char current[10];	//charging current
++	int temp;	//temperature
++	char register_buf[512] = {0};
++	int n = 0;
++	char buffer[LINE_SIZE+1];
++
++	read_file_int("/sys/class/power_supply/battery/present", &present);
++	read_file_int("/sys/class/power_supply/battery/online", &online);
++	read_file_int("/sys/class/power_supply/battery/voltage_now", &voltage);
++	read_file_int("/sys/class/power_supply/battery/temp", &temp);
++	read_file("/sys/class/power_supply/battery/current_now", current, sizeof(current));
++	read_file("/sys/class/power_supply/battery/dump_register", register_buf, sizeof(register_buf));
++
++	memset(cap_str, 0, sizeof(cap_str));
++    snprintf(cap_str, sizeof(cap_str), "present:%d, online:%d, voltage_now:%d, temp:%d, current:%s, register:%s\n", 
++		present, online, voltage, temp, current, register_buf);
++    str_len_px = gr_measure(cap_str);
++	str_len_char = strlen(cap_str);
++	for (n = 0; n <= str_len_char / LINE_SIZE; n++) {
++    	x = 10;
++    	y = 20 * n;
++    	android_green();
++		memset(buffer, '\0', sizeof(buffer));
++		strncpy(buffer, &cap_str[LINE_SIZE * n], LINE_SIZE);
++    	gr_text(x, y, buffer, 0);
++	}
++}
++#endif
++//liaoye@add for debug in shutdown charing, end
++
+ //liaoye@add, start
+ static void draw_ovp_warning(struct charger *charger)
+ {
+@@ -855,6 +898,11 @@
+ 	if (temp_level == -1) {
+ 		LOGE("cannot get battery temperature!\n");
+ 	}
++
++//liaoye@add for debug in shutdown charing, start
++#ifdef SDC_DEBUG
++	sdc_debug(charger);
++#endif
+ 	
+     /* try to display *something* */
+ 	if (temp_level > 0) {
