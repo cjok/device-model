@@ -1,0 +1,162 @@
+Index: rpm_proc/core/boot/ddr/hw/phy/v1/DDR_PHY.c
+===================================================================
+--- rpm_proc/core/boot/ddr/hw/phy/v1/DDR_PHY.c	(revision 8059)
++++ rpm_proc/core/boot/ddr/hw/phy/v1/DDR_PHY.c	(revision 8060)
+@@ -630,6 +630,12 @@
+ 
+ } /* HAL_SDRAM_PHY_Disable_Rapid_CDC_Cal */
+ 
++//liaoye@add for compatible samsung with hynix eMCP, start
++#define MF_MASK	0x0F
++#define MF_SAMSUNG  0x01	//Samsung KMN5X000ZM-B209001 0x10001 
++#define MF_HYNIX    0x06  	//Hynix H9TP32A4GDBCPR-KGM 0xFF0006  
++//liaoye@add for compatible samsung with hynix eMCP, end
++
+ /* =============================================================================
+ **  Function : HAL_SDRAM_PHY_Update_CDC_Config
+ ** =============================================================================
+@@ -658,9 +664,15 @@
+   uint32 dq;
+   uint32 offset;
+ 
++	//liaoye@add for compatible samsung with hynix eMCP
++  uint32 manufacture_name;
++
+   /* PHY offset */
+   phy_offset = (interface == SDRAM_INTERFACE_0) ? PHY_0_OFFSET : PHY_1_OFFSET;
+ 
++	//liaoye@add for compatible samsung with hynix eMCP
++	manufacture_name = HAL_SDRAM_Read_MR(interface, SDRAM_CS0, 0x5);
++
+   for (dq = 0; dq < sizeof(dq_offsets)/sizeof(dq_offsets[0]); dq++)
+   {
+     /* Offset for each DQ PHY */
+@@ -675,6 +687,15 @@
+     BOOT_HWIO_OUTM(PHY_DQ_ADDR(WR_CDC_DELAY_CFG), offset,
+                    HWIO_FMSK(PHY_DQ_ADDR(WR_CDC_DELAY_CFG), DELAY_VAL),
+                    config << HWIO_SHFT(PHY_DQ_ADDR(WR_CDC_DELAY_CFG), DELAY_VAL));
++
++		
++//liaoye@add for compatible samsung with hynix eMCP,start
++		if ((manufacture_name & MF_MASK) == MF_SAMSUNG) {
++			BOOT_HWIO_OUTM(PHY_DQ_ADDR(WR_CDC_DELAY_CFG), 
++			offset, HWIO_FMSK(PHY_DQ_ADDR(WR_CDC_DELAY_CFG), DELAY_VAL), 
++			(config + 100)<< HWIO_SHFT(PHY_DQ_ADDR(WR_CDC_DELAY_CFG), DELAY_VAL)); 
++		}
++//liaoye@add for compatible samsung with hynix eMCP, end
+   }
+ 
+   /* Offset for CA Master PHY */
+Index: boot_images/core/boot/ddr/common/ddr_config.h
+===================================================================
+--- boot_images/core/boot/ddr/common/ddr_config.h	(revision 8059)
++++ boot_images/core/boot/ddr/common/ddr_config.h	(revision 8060)
+@@ -24,6 +24,7 @@
+ extern uint32 (*ddr_phy_config_base)[2] ;
+ extern uint32 (*ddr_caphy_config_base)[2];
+ extern uint32 (*ddr_dqphy_config_base)[2];
++extern uint32 (*ddr_dqphy_config_base_hynix)[2];	//liaoye@add for compatible samsung with hynix eMCP
+ 
+ extern uint32 (*ddr_bimc_misc_config_delta)[2];
+ extern uint32 (*ddr_bimc_config_delta)[2];
+Index: boot_images/core/boot/ddr/hw/controller/BIMC_v1.c
+===================================================================
+--- boot_images/core/boot/ddr/hw/controller/BIMC_v1.c	(revision 8059)
++++ boot_images/core/boot/ddr/hw/controller/BIMC_v1.c	(revision 8060)
+@@ -64,7 +64,33 @@
+ #include "SITE.h"
+ #include "busywait.h"
+ 
++//liaoye@add for compatible samsung with hynix eMCP, start
++#include "boot_logger.h"
++#include <stdio.h>
++#include <string.h>
+ 
++#define MF_MASK	0x0F
++#define MF_SAMSUNG	0x01	//Samsung KMN5X000ZM-B209001 0x10001
++#define MF_HYNIX	0x06	//Hynix H9TP32A4GDBCPR-KGM  0xFF0006	
++
++void ddr_reconfig_DQS_offset(SDRAM_INTERFACE interface)
++{
++	char buffer[200];
++	uint32 manufacture_name;
++
++	manufacture_name = HAL_SDRAM_Read_MR(interface, SDRAM_CS0, 0x5);
++	sprintf(buffer, "[ddr_reconfig_DQS_offset]-->ddr manufacture id[0x%x]\n", manufacture_name);
++	boot_log_message(buffer);
++	if ((manufacture_name & MF_MASK) == MF_HYNIX) {
++		sprintf(buffer, "[ddr_reconfig_DQS_offset]reconfig HYNIX DQS offset[0x%x]\n", 
++		ddr_dqphy_config_base_hynix[18][1]);
++		boot_log_message(buffer);
++		ddr_set_config(DQ_BCAST_OFFSET, ddr_dqphy_config_base_hynix, ddr_dqphy_config_delta);
++	}
++}
++//liaoye@add for compatible samsung with hynix eMCP, end
++
++
+ /*==============================================================================
+                                   FUNCTIONS
+ ==============================================================================*/
+@@ -164,6 +190,10 @@
+   /* Size detection */
+   HAL_SDRAM_Ram_Size_Detection(interface);
+ 
++  //liaoye@add for compatible samsung with hynix eMCP
++  /*reconfig DQS OFFSET parameters*/
++  ddr_reconfig_DQS_offset(interface);
++
+   /* Parameter detection */
+   ddr_params_detection(interface);
+   
+Index: boot_images/core/boot/ddr/hw/msm8x10/ddr_config.c
+===================================================================
+--- boot_images/core/boot/ddr/hw/msm8x10/ddr_config.c	(revision 8059)
++++ boot_images/core/boot/ddr/hw/msm8x10/ddr_config.c	(revision 8060)
+@@ -172,16 +172,47 @@
+   {HWIO_ADDR(PHY_DQ_ADDR(RD_CDC_SW_OVRD_CFG)), 0x00000},
+   {HWIO_ADDR(PHY_DQ_ADDR(TOP_CFG)), 0x00000031},
+   {HWIO_ADDR(PHY_DQ_ADDR(WR_CDC_DELAY_CFG)), 0x0000758},
++  {HWIO_ADDR(PHY_DQ_ADDR(WR_CDC_OFFSET_CFG)), 0x000000},
++  {HWIO_ADDR(PHY_DQ_ADDR(WR_CDC_SW_OVRD_CFG)), 0x00000},
++  {0x0, 0x0}
++};
++
++//liaoye@add for compatible samsung with hynix eMCP, start
++uint32 ddr_dqphy_config_MSM8x10_hynix[][2] =
++{
++  {HWIO_ADDR(PHY_DQ_ADDR(CDC_CAL_TIMER_CFG0)), 0x1201000},
++  {HWIO_ADDR(PHY_DQ_ADDR(CDC_CAL_TIMER_CFG1)), 0x0004},
++  {HWIO_ADDR(PHY_DQ_ADDR(CDC_CTLR_CFG1)), 0x3F11111},
++  {HWIO_ADDR(PHY_DQ_ADDR(CDC_REFCOUNT_CFG)), 0xCB732020},
++  {HWIO_ADDR(PHY_DQ_ADDR(DQS_IOC_SLV_CFG)), 0x80000000},
++  {HWIO_ADDR(PHY_DQ_ADDR(DQ_IOC_SLV_CFG)), 0x80000000},
++  {HWIO_ADDR(PHY_DQ_ADDR(DQ_SMT_STATUS)), 0x00000000},
++  {HWIO_ADDR(PHY_DQ_ADDR(PAD_CFG0)), 0xA0222230},
++  {HWIO_ADDR(PHY_DQ_ADDR(PAD_CFG1)), 0xA0222230},
++  {HWIO_ADDR(PHY_DQ_ADDR(PAD_CFG2)), 0x10000000},
++  {HWIO_ADDR(PHY_DQ_ADDR(PAD_CFG3)), 0x1000FF11},
++  {HWIO_ADDR(PHY_DQ_ADDR(PAD_CFG4)), 0x20222250},
++  {HWIO_ADDR(PHY_DQ_ADDR(RD_CDC_DELAY_CFG)), 0x0000758},
++  {HWIO_ADDR(PHY_DQ_ADDR(RD_CDC_OFFSET_CFG)), 0x000000},
++  {HWIO_ADDR(PHY_DQ_ADDR(RD_CDC_SLAVE_DDA_CFG)), 0x16334},
++  {HWIO_ADDR(PHY_DQ_ADDR(RD_CDC_SW_OVRD_CFG)), 0x00000},
++  {HWIO_ADDR(PHY_DQ_ADDR(TOP_CFG)), 0x00000031},
++  {HWIO_ADDR(PHY_DQ_ADDR(WR_CDC_DELAY_CFG)), 0x0000758},
+   {HWIO_ADDR(PHY_DQ_ADDR(WR_CDC_OFFSET_CFG)), 0x000086}, // Modify by Fuang.Cao 2014-04-11
+   {HWIO_ADDR(PHY_DQ_ADDR(WR_CDC_SW_OVRD_CFG)), 0x00000},
+   {0x0, 0x0}
+ };
++//liaoye@add for compatible samsung with hynix eMCP, end
+ 
++
++
+ /* BIMC/PHY base config */
+ uint32 (*ddr_bimc_config_base)[2] = ddr_bimc_config_MSM8x10;
+ uint32 (*ddr_phy_config_base)[2] = ddr_phy_config_MSM8x10;
+ uint32 (*ddr_caphy_config_base)[2] = ddr_caphy_config_MSM8x10;
+ uint32 (*ddr_dqphy_config_base)[2] = ddr_dqphy_config_MSM8x10;
++//liaoye@add for compatible samsung with hynix eMCP
++uint32 (*ddr_dqphy_config_base_hynix)[2] = ddr_dqphy_config_MSM8x10_hynix;	
+ 
+ /* BIMC/PHY delta config compared to base */
+ uint32 (*ddr_bimc_config_delta)[2] = NULL;
