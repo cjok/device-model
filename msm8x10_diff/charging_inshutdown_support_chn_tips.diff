@@ -1,0 +1,374 @@
+Index: images/battery_ovp.png
+===================================================================
+Cannot display: file marked as a binary type.
+svn:mime-type = application/octet-stream
+Index: images/battery_ovp.png
+===================================================================
+--- images/battery_ovp.png	(revision 8011)
++++ images/battery_ovp.png	(revision 8012)
+
+Property changes on: images/battery_ovp.png
+___________________________________________________________________
+Added: svn:executable
+## -0,0 +1 ##
++*
+\ No newline at end of property
+Added: svn:mime-type
+## -0,0 +1 ##
++application/octet-stream
+\ No newline at end of property
+Index: images/battery_temp_high.png
+===================================================================
+Cannot display: file marked as a binary type.
+svn:mime-type = application/octet-stream
+Index: images/battery_temp_high.png
+===================================================================
+--- images/battery_temp_high.png	(revision 8011)
++++ images/battery_temp_high.png	(revision 8012)
+
+Property changes on: images/battery_temp_high.png
+___________________________________________________________________
+Added: svn:executable
+## -0,0 +1 ##
++*
+\ No newline at end of property
+Added: svn:mime-type
+## -0,0 +1 ##
++application/octet-stream
+\ No newline at end of property
+Index: images/battery_temp_low.png
+===================================================================
+Cannot display: file marked as a binary type.
+svn:mime-type = application/octet-stream
+Index: images/battery_temp_low.png
+===================================================================
+--- images/battery_temp_low.png	(revision 8011)
++++ images/battery_temp_low.png	(revision 8012)
+
+Property changes on: images/battery_temp_low.png
+___________________________________________________________________
+Added: svn:mime-type
+## -0,0 +1 ##
++application/octet-stream
+\ No newline at end of property
+Added: svn:executable
+## -0,0 +1 ##
++*
+\ No newline at end of property
+Index: charger.c
+===================================================================
+--- charger.c	(revision 8011)
++++ charger.c	(revision 8012)
+@@ -133,6 +133,11 @@
+ 
+     struct animation *batt_anim;
+     gr_surface surf_unknown;
++	//liaoye@add, start
++    gr_surface surf_temp_high;
++    gr_surface surf_temp_low;
++    gr_surface surf_ovp;
++	//liaoye@add, end
+ 
+     struct power_supply *battery;
+ };
+@@ -198,10 +203,70 @@
+ /* liaoye@fixed: the first display capacity is not correct */
+ 
+ //liaoye@add
+-static int get_battery_health(void);
+-static int get_battery_temp(void);
+-//liaoye@add
++static int draw_surface_centered(struct charger *charger, gr_surface surface);
+ 
++//liaoye@add, start
++#define BATTERY_HEALTH	"/sys/class/power_supply/battery/health"
++static int get_battery_health(void)
++{
++	int ret;
++	int fd;
++	char buffer[20];
++
++	fd = open(BATTERY_HEALTH, O_RDONLY);
++	if (fd < 0) {
++		perror("battery/health");
++		return -1;
++	}
++
++	ret = read(fd, buffer, sizeof(buffer));
++	close(fd);
++	if (ret == -1)
++		return -1;
++	
++	if (strncmp(buffer, "Over voltage", 10) == 0) {
++		return 0;
++	}
++
++	return -1;
++}
++
++#define BATTERY_TEMP	"/sys/class/power_supply/battery/temp"
++#define HOT_TEMP_THRESHOLD	450
++#define COLD_TEMP_THRESHOLD	0
++#define TEMP_TOO_HIGH	1
++#define TEMP_TOO_LOW	2
++static int get_battery_temp(void)
++{
++	int ret;
++	int fd;
++	char buffer[20];
++	int temp;
++
++	fd = open(BATTERY_TEMP, O_RDONLY);
++	if (fd < 0) {
++		perror("battery/temp");
++		return -1;
++	}
++
++	ret = read(fd, buffer, sizeof(buffer));
++	close(fd);
++	if (ret == -1)
++		return -1;
++	
++	temp = atoi(buffer);
++
++	if (temp >= HOT_TEMP_THRESHOLD) 
++		return TEMP_TOO_HIGH;	
++	else if (temp <= COLD_TEMP_THRESHOLD)
++		return TEMP_TOO_LOW;	
++
++	return 0;
++}
++//liaoye@add, end
++
++
++
+ /*
+  * shouldn't be changed after
+  * reading from alarm register
+@@ -698,44 +763,39 @@
+ }
+ 
+ //liaoye@add, start
+-static void draw_ovp_warning()
++static void draw_ovp_warning(struct charger *charger)
+ {
+-    char cap_str[64];
+-    int x, y;
+-    int str_len_px;
+ 
+-    clear_screen();
+-    str_len_px = gr_measure(cap_str);
+-    x = (gr_fb_width() - str_len_px) / 2;
+-    y = (gr_fb_height() + char_height) / 2;
+-    gr_color(0xff, 0, 0, 255);
+-    gr_text(x, y, "Over Voltage", 0);
+-    gr_text(x-60, y+40, "Please Remove The Charger", 0);
+-    gr_flip();
+-	sleep(8);
++  int y;
++    if (charger->surf_ovp) {
++        draw_surface_centered(charger, charger->surf_ovp);
++    } else {
++        android_green();
++        y = draw_text("over voltage", -1, -1);
++        draw_text("?\?/100", -1, y + 25);
++    }
+ }
+ 
+-static void draw_temp_warning(int temp_level)
++static void draw_temp_warning(int temp_level, struct charger *charger)
+ {
+-    char cap_str[64];
+-    int x, y;
+-    int str_len_px;
+-
+-    clear_screen();
+-    str_len_px = gr_measure(cap_str);
+-    x = (gr_fb_width() - str_len_px) / 2;
+-    y = (gr_fb_height() + char_height) / 2;
+-    gr_color(0xff, 0, 0, 255);
+-
+-	if (temp_level == 1) {
+-    	gr_text(x-50, y, "Temperature Too High", 0);
+-    	gr_text(x-60, y+40, "Please Remove The Charger", 0);
+-	} else {
+-    	gr_text(x-50, y, "Temperature Too Low", 0);
++    int y;
++	if (temp_level == TEMP_TOO_HIGH) {
++    	if (charger->surf_temp_high) {
++        	draw_surface_centered(charger, charger->surf_temp_high);
++    	} else {
++        	android_green();
++        	y = draw_text("temperature too high", -1, -1);
++        	draw_text("?\?/100", -1, y + 25);
++    	}
++	} else if (temp_level == TEMP_TOO_LOW) {
++    	if (charger->surf_temp_low) {
++        	draw_surface_centered(charger, charger->surf_temp_low);
++    	} else {
++        	android_green();
++        	y = draw_text("temperature too low", -1, -1);
++        	draw_text("?\?/100", -1, y + 25);
++    	}
+ 	}
+-
+-    gr_flip();
+-	sleep(2);
+ }
+ //liaoye@add, end
+ 
+@@ -786,17 +846,33 @@
+ static void redraw_screen(struct charger *charger)
+ {
+     struct animation *batt_anim = charger->batt_anim;
++	int temp_level;
+ 
+     clear_screen();
+ 
++	//liaoye@add, start
++	temp_level = get_battery_temp();
++	if (temp_level == -1) {
++		LOGE("cannot get battery temperature!\n");
++	}
++	
+     /* try to display *something* */
+-    if (batt_anim->capacity < 0 || batt_anim->num_frames == 0)
++	if (temp_level > 0) {
++		draw_temp_warning(temp_level, charger);
++    	gr_flip();
++	} else if (get_battery_health() == 0) {
++		draw_ovp_warning(charger);
++    	gr_flip();
++		sleep(8);
++    } else if (batt_anim->capacity < 0 || batt_anim->num_frames == 0) {
+         draw_unknown(charger);
+-    else {
++    	gr_flip();
++    } else {
+         draw_battery(charger);
+         draw_capacity(charger);
++    	gr_flip();
+     }
+-    gr_flip();
++	//liaoye@add, end
+ }
+ 
+ static void kick_animation(struct animation *anim)
+@@ -816,25 +892,10 @@
+     struct animation *batt_anim = charger->batt_anim;
+     int cur_frame;
+     int disp_time;
+-	//liaoye@add, start
+-	int temp_level;
+ 
+-	temp_level = get_battery_temp();
+-	//liaoye@add, end
+-
+     if (!batt_anim->run || now < charger->next_screen_transition)
+         return;
+ 
+-	//liaoye@add, start
+-	if (get_battery_health() == 0) {
+-		draw_ovp_warning();
+-		return;
+-	} else if (temp_level) {
+-		draw_temp_warning(temp_level);
+-		return;
+-	}
+-	//liaoye@add, end
+-
+     /* animation is over, blank screen and leave */
+     if (batt_anim->cur_cycle == batt_anim->num_cycles) {
+         reset_animation(batt_anim);
+@@ -1097,64 +1158,6 @@
+     return 0;
+ }
+ 
+-//liaoye@add, start
+-#define BATTERY_HEALTH	"/sys/class/power_supply/battery/health"
+-static int get_battery_health(void)
+-{
+-	int ret;
+-	int fd;
+-	char buffer[20];
+-
+-	fd = open(BATTERY_HEALTH, O_RDONLY);
+-	if (fd < 0) {
+-		perror("battery/health");
+-		return -1;
+-	}
+-
+-	ret = read(fd, buffer, sizeof(buffer));
+-	close(fd);
+-	if (ret == -1)
+-		return -1;
+-	
+-	if (strncmp(buffer, "Over voltage", 10) == 0) {
+-		return 0;
+-	}
+-
+-	return -1;
+-}
+-
+-#define BATTERY_TEMP	"/sys/class/power_supply/battery/temp"
+-#define HOT_TEMP_THRESHOLD	450
+-#define COLD_TEMP_THRESHOLD	0
+-static int get_battery_temp(void)
+-{
+-	int ret;
+-	int fd;
+-	char buffer[20];
+-	int temp;
+-
+-	fd = open(BATTERY_TEMP, O_RDONLY);
+-	if (fd < 0) {
+-		perror("battery/temp");
+-		return -1;
+-	}
+-
+-	ret = read(fd, buffer, sizeof(buffer));
+-	close(fd);
+-	if (ret == -1)
+-		return -1;
+-	
+-	temp = atoi(buffer);
+-
+-	if (temp >= HOT_TEMP_THRESHOLD) 
+-		return 1;
+-	else if (temp <= COLD_TEMP_THRESHOLD)
+-		return -1;
+-
+-	return 0;
+-}
+-//liaoye@add, end
+-
+ static void event_loop(struct charger *charger)
+ {
+     int ret;
+@@ -1486,6 +1489,26 @@
+         charger->surf_unknown = NULL;
+     }
+ 
++//liaoye@add, start
++    ret = res_create_surface("charger/battery_temp_high", &charger->surf_temp_high);
++    if (ret < 0) {
++        LOGE("Cannot load temperature image\n");
++        charger->surf_temp_high = NULL;
++    }
++
++    ret = res_create_surface("charger/battery_temp_low", &charger->surf_temp_low);
++    if (ret < 0) {
++        LOGE("Cannot load temperature image\n");
++        charger->surf_temp_low = NULL;
++    }
++
++    ret = res_create_surface("charger/battery_ovp", &charger->surf_ovp);
++    if (ret < 0) {
++        LOGE("Cannot load over voltage image\n");
++        charger->surf_ovp = NULL;
++    }
++//liaoye@add, end
++
+     for (i = 0; i < charger->batt_anim->num_frames; i++) {
+         struct frame *frame = &charger->batt_anim->frames[i];
+ 
