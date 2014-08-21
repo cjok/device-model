@@ -1,0 +1,60 @@
+Index: android/os/PowerManager.java
+===================================================================
+--- android/os/PowerManager.java	(revision 11329)
++++ android/os/PowerManager.java	(revision 11330)
+@@ -644,7 +644,27 @@
+         private boolean mRefCounted = true;
+         private boolean mHeld;
+         private WorkSource mWorkSource;
++        /* Add by Fuang.Cao 2014-08-18 */
++        private Long mForceReleaseTime;
++        private final String[] mForceReleaseLocks = new String[] {
++            "Checkin Service", "NlpCollectorWakeLock", "NlpWakeLock", "GCM_CONN_ALARM", "SnetLaunchService"
++        };
+ 
++        private boolean needForceRelease(int level, String tag) {
++            if (level != PowerManager.PARTIAL_WAKE_LOCK) {
++                return false;
++            }
++
++            for (String lock : mForceReleaseLocks) {
++                if (lock.equals(tag)) {
++                    return true;
++                }
++            }
++
++            return false;
++        }
++        /* End add */
++
+         private final Runnable mReleaser = new Runnable() {
+             public void run() {
+                 release();
+@@ -655,6 +675,13 @@
+             mFlags = flags;
+             mTag = tag;
+             mToken = new Binder();
++
++            /* Add by Fuang.Cao 2014-08-18 */
++            if (needForceRelease(flags & PowerManager.WAKE_LOCK_LEVEL_MASK, tag)) {
++                mForceReleaseTime = new Long(2 * 60 * 1000);
++                Log.d(TAG, "WakeLock '" + mTag + "' mForceReleaseTime = " + mForceReleaseTime);
++            }
++            /* End add */
+         }
+ 
+         @Override
+@@ -699,6 +726,13 @@
+         public void acquire() {
+             synchronized (mToken) {
+                 acquireLocked();
++                /* Add by Fuang.Cao 2014-08-18 */
++                if (mForceReleaseTime != null) {
++                    Log.d(TAG, "acquire '" + mTag + "' mForceReleaseTime = " + mForceReleaseTime);
++                    mRefCounted = false;
++                    mHandler.postDelayed(mReleaser, mForceReleaseTime);
++                }
++                /* End add */
+             }
+         }
+ 
