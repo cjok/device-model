@@ -1,0 +1,1517 @@
+Index: kernel/drivers/video/mmp/panel/Makefile
+===================================================================
+--- kernel/drivers/video/mmp/panel/Makefile	(revision 9294)
++++ kernel/drivers/video/mmp/panel/Makefile	(revision 9295)
+@@ -10,6 +10,7 @@
+ obj-$(CONFIG_MMP_PANEL_HX8394D)     += mipi_hx8394d_jt.o
+ obj-$(CONFIG_MMP_PANEL_FL10802)     += mipi_fl10802.o
+ obj-$(CONFIG_MMP_PANEL_ILI9881)     += mipi_ili9881.o
++obj-$(CONFIG_MMP_PANEL_ILI9881)     += mipi_ili9881_ivo.o
+ obj-$(CONFIG_MMP_PANEL_FL11280)     += mipi_fl11280.o
+ obj-$(CONFIG_MMP_PANEL_OTM8018B)     += mipi_otm8018b.o
+ obj-$(CONFIG_MMP_PANEL_OTM1283A)     += mipi_otm1283a.o
+Index: kernel/drivers/video/mmp/panel/mipi_ili9881_ivo.c
+===================================================================
+--- kernel/drivers/video/mmp/panel/mipi_ili9881_ivo.c	(revision 0)
++++ kernel/drivers/video/mmp/panel/mipi_ili9881_ivo.c	(revision 9295)
+@@ -0,0 +1,959 @@
++/*
++ * drivers/video/mmp/panel/mipi_ili9881.c
++ * active panel using DSI interface to do init
++ *
++ * Copyright (C) 2013 Marvell Technology Group Ltd.
++ * Authors: Yonghai Huang <huangyh@marvell.com>
++ *		Xiaolong Ye <yexl@marvell.com>
++ *          Guoqing Li <ligq@marvell.com>
++ *          Lisa Du <cldu@marvell.com>
++ *          Zhou Zhu <zzhu3@marvell.com>
++ *          Jing Xiang <jxiang@marvell.com>
++ *
++ * This program is free software; you can redistribute it and/or modify it
++ * under the terms of the GNU General Public License as published by the
++ * Free Software Foundation; either version 2 of the License, or (at your
++ * option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT
++ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
++ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
++ * more details.
++ *
++ * You should have received a copy of the GNU General Public License along with
++ * this program.  If not, see <http://www.gnu.org/licenses/>.
++ *
++ */
++
++#include <linux/module.h>
++#include <linux/moduleparam.h>
++#include <linux/kernel.h>
++#include <linux/errno.h>
++#include <linux/string.h>
++#include <linux/delay.h>
++#include <linux/platform_device.h>
++#include <linux/err.h>
++#include <linux/of.h>
++#include <linux/of_gpio.h>
++#include <linux/regulator/consumer.h>
++#include <linux/slab.h>
++#include <linux/fb.h>
++#include <video/mmp_disp.h>
++#include <video/mipi_display.h>
++#include <video/mmp_esd.h>
++
++#define TRACE pr_err("@@ %s, %d\n", __func__, __LINE__);
++struct ili9881_plat_data {
++	char *name; // Add by Chenzili
++	struct mmp_panel *panel;
++	u32 esd_enable;
++	void (*plat_onoff)(int status);
++	void (*plat_set_backlight)(struct mmp_panel *panel, int level);
++};
++
++
++#define ILI9881_720P_ID 0x9c
++#define HSM 0
++#define LPM 1
++
++static u8 ili9881_reg_cmd_ivo_01[] = {0xFF, 0x98, 0x81, 0x03};
++
++//GIP_1
++static u8 ili9881_reg_cmd_ivo_02[] = {0x01, 0x00};
++static u8 ili9881_reg_cmd_ivo_03[] = {0x02, 0x00};
++static u8 ili9881_reg_cmd_ivo_04[] = {0x03, 0x73};
++static u8 ili9881_reg_cmd_ivo_05[] = {0x04, 0x73};
++static u8 ili9881_reg_cmd_ivo_06[] = {0x05, 0x00};
++static u8 ili9881_reg_cmd_ivo_07[] = {0x06, 0x06};
++static u8 ili9881_reg_cmd_ivo_08[] = {0x07, 0x02};
++static u8 ili9881_reg_cmd_ivo_09[] = {0x08, 0x00};
++static u8 ili9881_reg_cmd_ivo_10[] = {0x09, 0x01};
++static u8 ili9881_reg_cmd_ivo_11[] = {0x0a, 0x01};
++static u8 ili9881_reg_cmd_ivo_12[] = {0x0b, 0x01};
++static u8 ili9881_reg_cmd_ivo_13[] = {0x0c, 0x01};
++static u8 ili9881_reg_cmd_ivo_14[] = {0x0d, 0x01};
++static u8 ili9881_reg_cmd_ivo_15[] = {0x0e, 0x01};
++static u8 ili9881_reg_cmd_ivo_16[] = {0x0f, 0x01};
++static u8 ili9881_reg_cmd_ivo_17[] = {0x10, 0x01};
++static u8 ili9881_reg_cmd_ivo_18[] = {0x11, 0x00};
++static u8 ili9881_reg_cmd_ivo_19[] = {0x12, 0x00};
++static u8 ili9881_reg_cmd_ivo_20[] = {0x13, 0x01};
++static u8 ili9881_reg_cmd_ivo_21[] = {0x14, 0x00};
++static u8 ili9881_reg_cmd_ivo_22[] = {0x15, 0x00};
++static u8 ili9881_reg_cmd_ivo_23[] = {0x16, 0x00};   
++static u8 ili9881_reg_cmd_ivo_24[] = {0x17, 0x00};   
++static u8 ili9881_reg_cmd_ivo_25[] = {0x18, 0x00};
++static u8 ili9881_reg_cmd_ivo_26[] = {0x19, 0x00};
++static u8 ili9881_reg_cmd_ivo_27[] = {0x1a, 0x00};
++static u8 ili9881_reg_cmd_ivo_28[] = {0x1b, 0x00};
++static u8 ili9881_reg_cmd_ivo_29[] = {0x1c, 0x00};
++static u8 ili9881_reg_cmd_ivo_30[] = {0x1d, 0x00};
++static u8 ili9881_reg_cmd_ivo_31[] = {0x1e, 0xC0};
++static u8 ili9881_reg_cmd_ivo_32[] = {0x1f, 0x80};
++static u8 ili9881_reg_cmd_ivo_33[] = {0x20, 0x04};
++static u8 ili9881_reg_cmd_ivo_34[] = {0x21, 0x03};
++static u8 ili9881_reg_cmd_ivo_35[] = {0x22, 0x00};
++static u8 ili9881_reg_cmd_ivo_36[] = {0x23, 0x00};
++static u8 ili9881_reg_cmd_ivo_37[] = {0x24, 0x00};
++static u8 ili9881_reg_cmd_ivo_38[] = {0x25, 0x00};
++static u8 ili9881_reg_cmd_ivo_39[] = {0x26, 0x00};
++static u8 ili9881_reg_cmd_ivo_40[] = {0x27, 0x00};
++static u8 ili9881_reg_cmd_ivo_41[] = {0x28, 0x33};
++static u8 ili9881_reg_cmd_ivo_42[] = {0x29, 0x03};
++static u8 ili9881_reg_cmd_ivo_43[] = {0x2a, 0x00};
++static u8 ili9881_reg_cmd_ivo_44[] = {0x2b, 0x00};
++static u8 ili9881_reg_cmd_ivo_45[] = {0x2c, 0x00};
++static u8 ili9881_reg_cmd_ivo_46[] = {0x2d, 0x00};
++static u8 ili9881_reg_cmd_ivo_47[] = {0x2e, 0x00};
++static u8 ili9881_reg_cmd_ivo_48[] = {0x2f, 0x00};
++static u8 ili9881_reg_cmd_ivo_49[] = {0x30, 0x00};
++static u8 ili9881_reg_cmd_ivo_50[] = {0x31, 0x00};
++static u8 ili9881_reg_cmd_ivo_51[] = {0x32, 0x00};
++static u8 ili9881_reg_cmd_ivo_52[] = {0x33, 0x00};   
++static u8 ili9881_reg_cmd_ivo_53[] = {0x34, 0x03};
++static u8 ili9881_reg_cmd_ivo_54[] = {0x35, 0x00};
++static u8 ili9881_reg_cmd_ivo_55[] = {0x36, 0x03};
++static u8 ili9881_reg_cmd_ivo_56[] = {0x37, 0x00};
++static u8 ili9881_reg_cmd_ivo_57[] = {0x38, 0x00};
++static u8 ili9881_reg_cmd_ivo_58[] = {0x39, 0x00};
++static u8 ili9881_reg_cmd_ivo_59[] = {0x3a, 0x00};
++static u8 ili9881_reg_cmd_ivo_60[] = {0x3b, 0x00};
++static u8 ili9881_reg_cmd_ivo_61[] = {0x3c, 0x00};
++static u8 ili9881_reg_cmd_ivo_62[] = {0x3d, 0x00};
++static u8 ili9881_reg_cmd_ivo_63[] = {0x3e, 0x00};
++static u8 ili9881_reg_cmd_ivo_64[] = {0x3f, 0x00};
++static u8 ili9881_reg_cmd_ivo_65[] = {0x40, 0x00};
++static u8 ili9881_reg_cmd_ivo_66[] = {0x41, 0x00};
++static u8 ili9881_reg_cmd_ivo_67[] = {0x42, 0x00};
++static u8 ili9881_reg_cmd_ivo_68[] = {0x43, 0x00};
++static u8 ili9881_reg_cmd_ivo_69[] = {0x44, 0x00};
++
++
++
++static u8 ili9881_reg_cmd_ivo_70[] = {0x50, 0x01};
++static u8 ili9881_reg_cmd_ivo_71[] = {0x51, 0x23};
++static u8 ili9881_reg_cmd_ivo_72[] = {0x52, 0x45};
++static u8 ili9881_reg_cmd_ivo_73[] = {0x53, 0x67};
++static u8 ili9881_reg_cmd_ivo_74[] = {0x54, 0x89};
++static u8 ili9881_reg_cmd_ivo_75[] = {0x55, 0xab};
++static u8 ili9881_reg_cmd_ivo_76[] = {0x56, 0x01};
++static u8 ili9881_reg_cmd_ivo_77[] = {0x57, 0x23};
++static u8 ili9881_reg_cmd_ivo_78[] = {0x58, 0x45};
++static u8 ili9881_reg_cmd_ivo_79[] = {0x59, 0x67};
++static u8 ili9881_reg_cmd_ivo_80[] = {0x5a, 0x89};
++static u8 ili9881_reg_cmd_ivo_81[] = {0x5b, 0xab};
++static u8 ili9881_reg_cmd_ivo_82[] = {0x5c, 0xcd};
++static u8 ili9881_reg_cmd_ivo_83[] = {0x5d, 0xef};  
++
++
++ static u8 ili9881_reg_cmd_ivo_84[] = {0x5e, 0x10};
++ static u8 ili9881_reg_cmd_ivo_85[] = {0x5f, 0x09};
++ static u8 ili9881_reg_cmd_ivo_86[] = {0x60, 0x08};
++ static u8 ili9881_reg_cmd_ivo_87[] = {0x61, 0x0F};
++ static u8 ili9881_reg_cmd_ivo_88[] = {0x62, 0x0E};
++ static u8 ili9881_reg_cmd_ivo_89[] = {0x63, 0x0D};
++ static u8 ili9881_reg_cmd_ivo_90[] = {0x64, 0x0C};
++ static u8 ili9881_reg_cmd_ivo_91[] = {0x65, 0x02};
++ static u8 ili9881_reg_cmd_ivo_92[] = {0x66, 0x02};
++ static u8 ili9881_reg_cmd_ivo_93[] = {0x67, 0x02};
++ static u8 ili9881_reg_cmd_ivo_94[] = {0x68, 0x02};
++ static u8 ili9881_reg_cmd_ivo_95[] = {0x69, 0x02};
++ static u8 ili9881_reg_cmd_ivo_96[] = {0x6a, 0x02};
++ static u8 ili9881_reg_cmd_ivo_97[] = {0x6b, 0x02};
++ static u8 ili9881_reg_cmd_ivo_98[] = {0x6c, 0x02};
++ static u8 ili9881_reg_cmd_ivo_99[] = {0x6d, 0x02};		//VGH pumping ratio 3x
++static u8 ili9881_reg_cmd_ivo_100[] = {0x6e, 0x02};		//VGL pumping ratio 2x
++static u8 ili9881_reg_cmd_ivo_101[] = {0x6f, 0x02};		//VGH clamp 15V
++static u8 ili9881_reg_cmd_ivo_102[] = {0x70, 0x02};		//VGL clamp -10V
++static u8 ili9881_reg_cmd_ivo_103[] = {0x71, 0x06};		//POWER SAVING
++static u8 ili9881_reg_cmd_ivo_104[] = {0x72, 0x07}; 		//RF Improve
++static u8 ili9881_reg_cmd_ivo_105[] = {0x73, 0x02};		//performance enhancement
++static u8 ili9881_reg_cmd_ivo_106[] = {0x74, 0x02};		//performance enhancement
++static u8 ili9881_reg_cmd_ivo_107[] = {0x75, 0x06};		//Performance enhancement
++static u8 ili9881_reg_cmd_ivo_108[] = {0x76, 0x07};		//Performance enhancement
++static u8 ili9881_reg_cmd_ivo_109[] = {0x77, 0x0E};		//Performance enhancement
++static u8 ili9881_reg_cmd_ivo_110[] = {0x78, 0x0F};		//Performance enhancement
++static u8 ili9881_reg_cmd_ivo_111[] = {0x79, 0x0C};		//Performance enhancement
++static u8 ili9881_reg_cmd_ivo_201[] = {0x7a, 0x0D};		//VGH pumping ratio 3x
++static u8 ili9881_reg_cmd_ivo_112[] = {0x7b, 0x02};
++static u8 ili9881_reg_cmd_ivo_113[] = {0x7c, 0x02};	//BGR,SS
++static u8 ili9881_reg_cmd_ivo_114[] = {0x7d, 0x02};	//VCOM1 
++static u8 ili9881_reg_cmd_ivo_115[] = {0x7e, 0x02};	//VCOM2
++static u8 ili9881_reg_cmd_ivo_116[] = {0x7f, 0x02};      //VREG1OUT=4.7V  A3
++static u8 ili9881_reg_cmd_ivo_117[] = {0x80, 0x02};      //VREG2OUT=-4.7V  A3
++static u8 ili9881_reg_cmd_ivo_118[] = {0x81, 0x02};	//column inversion
++static u8 ili9881_reg_cmd_ivo_119[] = {0x82, 0x02};	//ILI4003 pumping clk    
++static u8 ili9881_reg_cmd_ivo_120[] = {0x83, 0x02};	//VP255	Gamma P
++static u8 ili9881_reg_cmd_ivo_121[] = {0x84, 0x02};      //VP251        
++static u8 ili9881_reg_cmd_ivo_122[] = {0x85, 0x02};      //VP247        
++static u8 ili9881_reg_cmd_ivo_123[] = {0x86, 0x02};      //VP243        
++static u8 ili9881_reg_cmd_ivo_124[] = {0x87, 0x09};      //VP239        
++static u8 ili9881_reg_cmd_ivo_125[] = {0x88, 0x08};      //VP231        
++static u8 ili9881_reg_cmd_ivo_126[] = {0x89, 0x02};      //VP219        
++static u8 ili9881_reg_cmd_ivo_127[] = {0x8A, 0x02};      //VP203   
++
++     
++static u8 ili9881_reg_cmd_ivo_128[] = {0xFF, 0x98, 0x81, 0x04};      //VP175        
++static u8 ili9881_reg_cmd_ivo_129[] = {0x6C, 0x15};      //VP144        
++static u8 ili9881_reg_cmd_ivo_130[] = {0x6E, 0x2A};      //VP111        
++static u8 ili9881_reg_cmd_ivo_131[] = {0x6F, 0x57};      //VP80         
++static u8 ili9881_reg_cmd_ivo_132[] = {0x3A, 0xA4};      //VP52      
++static u8 ili9881_reg_cmd_ivo_133[] = {0x8D, 0x1A};      //VP36         
++static u8 ili9881_reg_cmd_ivo_134[] = {0x87, 0xBA};      //VP24         
++static u8 ili9881_reg_cmd_ivo_135[] = {0x26, 0x76};      //VP16         
++static u8 ili9881_reg_cmd_ivo_136[] = {0xB2, 0xD1};      //VP12         
++static u8 ili9881_reg_cmd_ivo_137[] = {0x00, 0x80};      //VP8      
++
++    
++static u8 ili9881_reg_cmd_ivo_138[] = {0xFF, 0x98, 0x81, 0x01};      //VP4          
++static u8 ili9881_reg_cmd_ivo_139[] = {0x22, 0x0A};      //VP0                                                     
++static u8 ili9881_reg_cmd_ivo_140[] = {0x31, 0x00};	//VN255 GAMMA N
++static u8 ili9881_reg_cmd_ivo_141[] = {0x53, 0x2e};      //VN251        
++static u8 ili9881_reg_cmd_ivo_142[] = {0x55, 0x50};      //VN247        
++static u8 ili9881_reg_cmd_ivo_143[] = {0x50, 0xbf};      //VN243        
++static u8 ili9881_reg_cmd_ivo_144[] = {0x51, 0xbf};      //VN239        
++static u8 ili9881_reg_cmd_ivo_145[] = {0x60, 0x06};      //VN231        
++static u8 ili9881_reg_cmd_ivo_146[] = {0x61, 0x00};      //VN219        
++static u8 ili9881_reg_cmd_ivo_147[] = {0x62, 0x2f};      //VN203 
++       
++static u8 ili9881_reg_cmd_ivo_148[] = {0xFF, 0x98, 0x81, 0x01};      //VN175        
++static u8 ili9881_reg_cmd_ivo_149[] = {0xA0, 0x14};      //VN144        
++static u8 ili9881_reg_cmd_ivo_150[] = {0xA1, 0x35};      //VN111        
++static u8 ili9881_reg_cmd_ivo_151[] = {0xA2, 0x49};      //VN80         
++static u8 ili9881_reg_cmd_ivo_152[] = {0xA3, 0x1f};      //VN52        
++static u8 ili9881_reg_cmd_ivo_153[] = {0xA4, 0x1a};      //VN36         
++static u8 ili9881_reg_cmd_ivo_154[] = {0xA5, 0x31};      //VN24         
++static u8 ili9881_reg_cmd_ivo_155[] = {0xA6, 0x26};      //VN16         
++static u8 ili9881_reg_cmd_ivo_156[] = {0xA7, 0x25};      //VN12         
++static u8 ili9881_reg_cmd_ivo_157[] = {0xA8, 0xbc};      //VN8          
++static u8 ili9881_reg_cmd_ivo_158[] = {0xA9, 0x19};      //VN4          
++static u8 ili9881_reg_cmd_ivo_159[] = {0xAA, 0x26};      //VN0  
++static u8 ili9881_reg_cmd_ivo_160[] = {0xAB, 0x90};      //VN144
++static u8 ili9881_reg_cmd_ivo_161[] = {0xAC, 0x18};      //VN111
++static u8 ili9881_reg_cmd_ivo_162[] = {0xAD, 0x16};      //VN80 
++static u8 ili9881_reg_cmd_ivo_163[] = {0xAE, 0x49};      //VN52 
++static u8 ili9881_reg_cmd_ivo_164[] = {0xAF, 0x1f};      //VN36 
++static u8 ili9881_reg_cmd_ivo_165[] = {0xB0, 0x26};      //VN24 
++static u8 ili9881_reg_cmd_ivo_166[] = {0xB1, 0x4d};      //VN16 
++static u8 ili9881_reg_cmd_ivo_167[] = {0xB2, 0x5a};      //VN12 
++static u8 ili9881_reg_cmd_ivo_168[] = {0xB3, 0x26};      //VN8   
++
++static u8 ili9881_reg_cmd_ivo_169[] = {0xC0, 0x12};      //VN4  
++static u8 ili9881_reg_cmd_ivo_170[] = {0xC1, 0x35};      //VN0  
++static u8 ili9881_reg_cmd_ivo_171[] = {0xC2, 0x4a};      //VN144
++static u8 ili9881_reg_cmd_ivo_172[] = {0xC3, 0x1f};      //VN111
++static u8 ili9881_reg_cmd_ivo_173[] = {0xC4, 0x20};      //VN80 
++static u8 ili9881_reg_cmd_ivo_174[] = {0xC5, 0x39};      //VN52 
++static u8 ili9881_reg_cmd_ivo_175[] = {0xC6, 0x2d};      //VN36 
++static u8 ili9881_reg_cmd_ivo_176[] = {0xC7, 0x27};      //VN24 
++static u8 ili9881_reg_cmd_ivo_177[] = {0xC8, 0xda};      //VN16 
++static u8 ili9881_reg_cmd_ivo_178[] = {0xC9, 0x1e};      //VN12 
++static u8 ili9881_reg_cmd_ivo_179[] = {0xCA, 0x2a};      //VN8  
++static u8 ili9881_reg_cmd_ivo_180[] = {0xCB, 0xac};      //VN4  
++static u8 ili9881_reg_cmd_ivo_181[] = {0xCC, 0x1b};      //VN0  
++static u8 ili9881_reg_cmd_ivo_182[] = {0xCD, 0x17};      //VN144
++static u8 ili9881_reg_cmd_ivo_183[] = {0xCE, 0x4d};      //VN111
++static u8 ili9881_reg_cmd_ivo_184[] = {0xCF, 0x23};      //VN80 
++static u8 ili9881_reg_cmd_ivo_185[] = {0xD0, 0x2a};      //VN52 
++static u8 ili9881_reg_cmd_ivo_186[] = {0xD1, 0x53};      //VN36 
++static u8 ili9881_reg_cmd_ivo_187[] = {0xD2, 0x5a};      //VN24 
++static u8 ili9881_reg_cmd_ivo_188[] = {0xD3, 0x20};      //VN16 
++
++
++static u8 ili9881_reg_cmd_ivo_189[] = {0xFF, 0x98, 0x81, 0x00};
++static u8 ili9881_reg_cmd_ivo_190[] = {0x11, 0x00};			//sleep out
++static u8 ili9881_reg_cmd_ivo_191[] = {0x29, 0x00};			//display on
++
++static struct mmp_dsi_cmd_desc ili9881_display_on_cmds_ivo[] = {
++	 {MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_01), ili9881_reg_cmd_ivo_01},
++	 {MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_02), ili9881_reg_cmd_ivo_02},
++	 {MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_03), ili9881_reg_cmd_ivo_03},
++	 {MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_04), ili9881_reg_cmd_ivo_04},
++	 {MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_05), ili9881_reg_cmd_ivo_05},
++	 {MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_06), ili9881_reg_cmd_ivo_06},
++	 {MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_07), ili9881_reg_cmd_ivo_07},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_08), ili9881_reg_cmd_ivo_08},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_09), ili9881_reg_cmd_ivo_09},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_10), ili9881_reg_cmd_ivo_10},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_11), ili9881_reg_cmd_ivo_11},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_12), ili9881_reg_cmd_ivo_12},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_13), ili9881_reg_cmd_ivo_13},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_14), ili9881_reg_cmd_ivo_14},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_15), ili9881_reg_cmd_ivo_15},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_16), ili9881_reg_cmd_ivo_16},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_17), ili9881_reg_cmd_ivo_17},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_18), ili9881_reg_cmd_ivo_18},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_19), ili9881_reg_cmd_ivo_19},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_20), ili9881_reg_cmd_ivo_20},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_21), ili9881_reg_cmd_ivo_21},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_22), ili9881_reg_cmd_ivo_22},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_23), ili9881_reg_cmd_ivo_23},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_24), ili9881_reg_cmd_ivo_24},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_25), ili9881_reg_cmd_ivo_25},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_26), ili9881_reg_cmd_ivo_26},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_27), ili9881_reg_cmd_ivo_27},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_28), ili9881_reg_cmd_ivo_28},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_29), ili9881_reg_cmd_ivo_29},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_30), ili9881_reg_cmd_ivo_30},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_31), ili9881_reg_cmd_ivo_31},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_32), ili9881_reg_cmd_ivo_32},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_33), ili9881_reg_cmd_ivo_33},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_34), ili9881_reg_cmd_ivo_34},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_35), ili9881_reg_cmd_ivo_35},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_36), ili9881_reg_cmd_ivo_36},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_37), ili9881_reg_cmd_ivo_37},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_38), ili9881_reg_cmd_ivo_38},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_39), ili9881_reg_cmd_ivo_39},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_40), ili9881_reg_cmd_ivo_40},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_41), ili9881_reg_cmd_ivo_41},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_42), ili9881_reg_cmd_ivo_42},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_43), ili9881_reg_cmd_ivo_43},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_44), ili9881_reg_cmd_ivo_44},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_45), ili9881_reg_cmd_ivo_45},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_46), ili9881_reg_cmd_ivo_46},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_47), ili9881_reg_cmd_ivo_47},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_48), ili9881_reg_cmd_ivo_48},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_49), ili9881_reg_cmd_ivo_49},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_50), ili9881_reg_cmd_ivo_50},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_51), ili9881_reg_cmd_ivo_51},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_52), ili9881_reg_cmd_ivo_52},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_53), ili9881_reg_cmd_ivo_53},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_54), ili9881_reg_cmd_ivo_54},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_55), ili9881_reg_cmd_ivo_55},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_56), ili9881_reg_cmd_ivo_56},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_57), ili9881_reg_cmd_ivo_57},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_58), ili9881_reg_cmd_ivo_58},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_59), ili9881_reg_cmd_ivo_59},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_60), ili9881_reg_cmd_ivo_60},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_61), ili9881_reg_cmd_ivo_61},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_62), ili9881_reg_cmd_ivo_62},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_63), ili9881_reg_cmd_ivo_63},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_64), ili9881_reg_cmd_ivo_64},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_65), ili9881_reg_cmd_ivo_65},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_66), ili9881_reg_cmd_ivo_66},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_67), ili9881_reg_cmd_ivo_67},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_68), ili9881_reg_cmd_ivo_68},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_69), ili9881_reg_cmd_ivo_69},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_70), ili9881_reg_cmd_ivo_70},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_71), ili9881_reg_cmd_ivo_71},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_72), ili9881_reg_cmd_ivo_72},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_73), ili9881_reg_cmd_ivo_73},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_74), ili9881_reg_cmd_ivo_74},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_75), ili9881_reg_cmd_ivo_75},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_76), ili9881_reg_cmd_ivo_76},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_77), ili9881_reg_cmd_ivo_77},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_78), ili9881_reg_cmd_ivo_78},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_79), ili9881_reg_cmd_ivo_79},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_80), ili9881_reg_cmd_ivo_80},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_81), ili9881_reg_cmd_ivo_81},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_82), ili9881_reg_cmd_ivo_82},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_83), ili9881_reg_cmd_ivo_83},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_84), ili9881_reg_cmd_ivo_84},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_85), ili9881_reg_cmd_ivo_85},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_86), ili9881_reg_cmd_ivo_86},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_87), ili9881_reg_cmd_ivo_87},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_88), ili9881_reg_cmd_ivo_88},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_89), ili9881_reg_cmd_ivo_89},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_90), ili9881_reg_cmd_ivo_90},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_91), ili9881_reg_cmd_ivo_91},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_92), ili9881_reg_cmd_ivo_92},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_93), ili9881_reg_cmd_ivo_93},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_94), ili9881_reg_cmd_ivo_94},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_95), ili9881_reg_cmd_ivo_95},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_96), ili9881_reg_cmd_ivo_96},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_97), ili9881_reg_cmd_ivo_97},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_98), ili9881_reg_cmd_ivo_98},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_99), ili9881_reg_cmd_ivo_99},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_100), ili9881_reg_cmd_ivo_100},
++	
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_101), ili9881_reg_cmd_ivo_101},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_102), ili9881_reg_cmd_ivo_102},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_103), ili9881_reg_cmd_ivo_103},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_104), ili9881_reg_cmd_ivo_104},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_105), ili9881_reg_cmd_ivo_105},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_106), ili9881_reg_cmd_ivo_106},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_107), ili9881_reg_cmd_ivo_107},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_108), ili9881_reg_cmd_ivo_108},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_109), ili9881_reg_cmd_ivo_109},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_110), ili9881_reg_cmd_ivo_110},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_111), ili9881_reg_cmd_ivo_111},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_201), ili9881_reg_cmd_ivo_201},	
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_112), ili9881_reg_cmd_ivo_112},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_113), ili9881_reg_cmd_ivo_113},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_114), ili9881_reg_cmd_ivo_114},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_115), ili9881_reg_cmd_ivo_115},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_116), ili9881_reg_cmd_ivo_116},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_117), ili9881_reg_cmd_ivo_117},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_118), ili9881_reg_cmd_ivo_118},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_119), ili9881_reg_cmd_ivo_119},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_120), ili9881_reg_cmd_ivo_120},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_121), ili9881_reg_cmd_ivo_121},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_122), ili9881_reg_cmd_ivo_122},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_123), ili9881_reg_cmd_ivo_123},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_124), ili9881_reg_cmd_ivo_124},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_125), ili9881_reg_cmd_ivo_125},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_126), ili9881_reg_cmd_ivo_126},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_127), ili9881_reg_cmd_ivo_127},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_128), ili9881_reg_cmd_ivo_128},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_129), ili9881_reg_cmd_ivo_129},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_130), ili9881_reg_cmd_ivo_130},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_131), ili9881_reg_cmd_ivo_131},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_132), ili9881_reg_cmd_ivo_132},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_133), ili9881_reg_cmd_ivo_133},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_134), ili9881_reg_cmd_ivo_134},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_135), ili9881_reg_cmd_ivo_135},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_136), ili9881_reg_cmd_ivo_136},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_137), ili9881_reg_cmd_ivo_137},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_138), ili9881_reg_cmd_ivo_138},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_139), ili9881_reg_cmd_ivo_139},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_140), ili9881_reg_cmd_ivo_140},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_141), ili9881_reg_cmd_ivo_141},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_142), ili9881_reg_cmd_ivo_142},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_143), ili9881_reg_cmd_ivo_143},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_144), ili9881_reg_cmd_ivo_144},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_145), ili9881_reg_cmd_ivo_145},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_146), ili9881_reg_cmd_ivo_146},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_147), ili9881_reg_cmd_ivo_147},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_148), ili9881_reg_cmd_ivo_148},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_149), ili9881_reg_cmd_ivo_149},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_150), ili9881_reg_cmd_ivo_150},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_151), ili9881_reg_cmd_ivo_151},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_152), ili9881_reg_cmd_ivo_152},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_153), ili9881_reg_cmd_ivo_153},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_154), ili9881_reg_cmd_ivo_154},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_155), ili9881_reg_cmd_ivo_155},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_156), ili9881_reg_cmd_ivo_156},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_157), ili9881_reg_cmd_ivo_157},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_158), ili9881_reg_cmd_ivo_158},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_159), ili9881_reg_cmd_ivo_159},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_160), ili9881_reg_cmd_ivo_160},     
++
++
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_161), ili9881_reg_cmd_ivo_161},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_162), ili9881_reg_cmd_ivo_162},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_163), ili9881_reg_cmd_ivo_163},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_164), ili9881_reg_cmd_ivo_164},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_165), ili9881_reg_cmd_ivo_165},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_166), ili9881_reg_cmd_ivo_166},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_167), ili9881_reg_cmd_ivo_167},  	
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_168), ili9881_reg_cmd_ivo_168},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_169), ili9881_reg_cmd_ivo_169},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_170), ili9881_reg_cmd_ivo_170},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_171), ili9881_reg_cmd_ivo_171},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_172), ili9881_reg_cmd_ivo_172},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_173), ili9881_reg_cmd_ivo_173},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_174), ili9881_reg_cmd_ivo_174},  
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_175), ili9881_reg_cmd_ivo_175},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_176), ili9881_reg_cmd_ivo_176},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_177), ili9881_reg_cmd_ivo_177},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_178), ili9881_reg_cmd_ivo_178},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_179), ili9881_reg_cmd_ivo_179},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_180), ili9881_reg_cmd_ivo_180},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_181), ili9881_reg_cmd_ivo_181},  
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_182), ili9881_reg_cmd_ivo_182},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_183), ili9881_reg_cmd_ivo_183},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_184), ili9881_reg_cmd_ivo_184},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_185), ili9881_reg_cmd_ivo_185},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_186), ili9881_reg_cmd_ivo_186},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_187), ili9881_reg_cmd_ivo_187},
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_188), ili9881_reg_cmd_ivo_188},  
++	{MIPI_DSI_GENERIC_LONG_WRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_189), ili9881_reg_cmd_ivo_189}, 
++	{MIPI_DSI_DCS_SHORT_WRITE,   1,120,sizeof(ili9881_reg_cmd_ivo_190), ili9881_reg_cmd_ivo_190},
++	{MIPI_DSI_DCS_SHORT_WRITE,   1,150,sizeof(ili9881_reg_cmd_ivo_191), ili9881_reg_cmd_ivo_191},
++	
++};	
++static char enter_sleep[] = {0x10};
++static char display_off[] = {0x28};
++
++static struct mmp_dsi_cmd_desc ili9881_display_off_cmds[] = {
++	{MIPI_DSI_DCS_SHORT_WRITE, 0, 10,
++		sizeof(enter_sleep), enter_sleep},
++	{MIPI_DSI_DCS_SHORT_WRITE, 0, 120,
++		sizeof(display_off), display_off},
++};
++
++static void ili9881_panel_on(struct mmp_panel *panel, int status)
++{
++   printk(KERN_DEBUG "ili9881_panel_on status=%d\n",status);
++	if (status) {
++		mmp_panel_dsi_ulps_set_on(panel, 0);
++		mmp_panel_dsi_tx_cmd_array(panel, ili9881_display_on_cmds_ivo,
++			ARRAY_SIZE(ili9881_display_on_cmds_ivo));
++	} else {
++		mmp_panel_dsi_tx_cmd_array(panel, ili9881_display_off_cmds,
++			ARRAY_SIZE(ili9881_display_off_cmds));
++		mmp_panel_dsi_ulps_set_on(panel, 1);
++	}
++}
++
++#ifdef CONFIG_OF
++static void ili9881_panel_power(struct mmp_panel *panel, int skip_on, int on)
++{
++	static struct regulator *lcd_iovdd, *lcd_avdd;
++	int lcd_rst_n, ret = 0;
++
++	pr_debug("%s on=%d skip=%d +\n", __func__, on, skip_on);
++
++	lcd_rst_n = of_get_named_gpio(panel->dev->of_node, "rst_gpio", 0);
++	if (lcd_rst_n < 0) {
++		pr_err("%s: of_get_named_gpio failed\n", __func__);
++		return;
++	}
++
++	if (gpio_request(lcd_rst_n, "lcd reset gpio")) {
++		pr_err("gpio %d request failed\n", lcd_rst_n);
++		return;
++	}
++
++	/* FIXME: LCD_IOVDD, 1.8V from buck2 */
++	if (panel->is_iovdd && (!lcd_iovdd)) {
++		lcd_iovdd = regulator_get(panel->dev, "iovdd");
++		if (IS_ERR(lcd_iovdd)) {
++			pr_err("%s regulator get error!\n", __func__);
++			ret = -EIO;
++			goto regu_lcd_iovdd;
++		}
++	}
++	if (panel->is_avdd && (!lcd_avdd)) {
++		lcd_avdd = regulator_get(panel->dev, "avdd");
++		if (IS_ERR(lcd_avdd)) {
++			pr_err("%s regulator get error!\n", __func__);
++			ret = -EIO;
++			goto regu_lcd_iovdd;
++		}
++	}
++	if (on) {
++		if (panel->is_avdd && lcd_avdd) {
++			regulator_set_voltage(lcd_avdd, 2800000, 2800000);
++			ret = regulator_enable(lcd_avdd);
++			if (ret < 0)
++				goto regu_lcd_iovdd;
++		}
++
++		if (panel->is_iovdd && lcd_iovdd) {
++			regulator_set_voltage(lcd_iovdd, 1800000, 1800000);
++			ret = regulator_enable(lcd_iovdd);
++			if (ret < 0)
++				goto regu_lcd_iovdd;
++		}
++		usleep_range(20000, 21000);
++
++		if (!skip_on) {
++			gpio_direction_output(lcd_rst_n, 1);
++			usleep_range(10000, 11000);
++			gpio_direction_output(lcd_rst_n, 0);
++			usleep_range(10000, 12000);
++			gpio_direction_output(lcd_rst_n, 1);
++			msleep(120);
++		}
++	} else {
++		/* set panel reset */
++		gpio_direction_output(lcd_rst_n, 0);
++		/* disable LCD_IOVDD 1.8v */
++		if (panel->is_iovdd && lcd_iovdd)
++			regulator_disable(lcd_iovdd);
++		if (panel->is_avdd && lcd_avdd)
++			regulator_disable(lcd_avdd);
++	}
++
++regu_lcd_iovdd:
++	gpio_free(lcd_rst_n);
++	if (ret < 0) {
++		lcd_iovdd = NULL;
++		lcd_avdd = NULL;
++	}
++}
++#else
++static void ili9881_panel_power(struct mmp_panel *panel, int skip_on, int on) {}
++#endif
++
++static void ili9881_set_status(struct mmp_panel *panel, int status)
++{
++	struct ili9881_plat_data *plat = panel->plat_data;
++	int skip_on = (status == MMP_ON_REDUCED);
++
++	if (status_is_on(status)) {
++		/* power on */
++		if (plat->plat_onoff)
++			plat->plat_onoff(1);
++		else
++			ili9881_panel_power(panel, skip_on, 1);
++		if (!skip_on)
++			ili9881_panel_on(panel, 1);
++	} else if (status_is_off(status)) {
++		ili9881_panel_on(panel, 0);
++		/* power off */
++		if (plat->plat_onoff)
++			plat->plat_onoff(0);
++		else
++			ili9881_panel_power(panel, 0, 0);
++	} else
++		dev_warn(panel->dev, "set status %s not supported\n",
++					status_name(status));
++}
++
++static void ili9881_esd_onoff(struct mmp_panel *panel, int status)
++{
++	struct ili9881_plat_data *plat = panel->plat_data;
++
++	if (status) {
++		if (plat->esd_enable)
++			esd_start(&panel->esd);
++	} else {
++		if (plat->esd_enable)
++			esd_stop(&panel->esd);
++	}
++}
++
++static void ili9881_esd_recover(struct mmp_panel *panel)
++{
++	struct mmp_path *path = mmp_get_path(panel->plat_path_name);
++	static int count = 1;
++
++	/*
++	 * FIXME: skip the first esd_recover
++	 * since the first esd check will fail.
++	 */
++	if (count++ > 1)
++		esd_panel_recover(path);
++}
++
++/*
++ * ili9881 esd check  id
++ */
++/* for panel ili9881 */
++static u8 ili9881_pkt_size_cmd[] = {0x01};
++static u8 ili9881_size_cmd[4] = {0xFF, 0x98, 0x81, 0x00};
++static u8 ili9881_read_id1[] = {0x0a};
++static struct mmp_dsi_cmd_desc ili9881_read_id1_cmds[] = {
++	{MIPI_DSI_GENERIC_LONG_WRITE, 0, 0, sizeof(ili9881_size_cmd),
++		ili9881_size_cmd},
++	{MIPI_DSI_SET_MAXIMUM_RETURN_PACKET_SIZE, 0, 0, sizeof(ili9881_pkt_size_cmd),
++		ili9881_pkt_size_cmd},	
++	{MIPI_DSI_DCS_READ, 0, 0, sizeof(ili9881_read_id1), ili9881_read_id1},
++};
++
++static int ili9881_get_status(struct mmp_panel *panel)
++{
++	struct mmp_dsi_buf dbuf;
++	u32 read_id = 0;
++	int ret;
++
++	ret = mmp_panel_dsi_rx_cmd_array(panel, &dbuf,
++		ili9881_read_id1_cmds,
++		ARRAY_SIZE(ili9881_read_id1_cmds));
++	if (ret < 0) {
++		pr_err("[ERROR] DSI receive failure!\n");
++		return 1;
++	}
++	read_id |= dbuf.data[0];
++	if (read_id != ILI9881_720P_ID) {
++		pr_err("[ERROR] panel status is 0x%x\n", read_id);
++		return 1;
++	} else {
++		pr_err("(ivo)panel status is 0x%x\n", read_id);
++	}
++
++	return 0;
++}
++static struct mmp_mode mmp_modes_ili9881[] = {
++	[0] = {
++		.pixclock_freq = 70690560,
++		.refresh = 60,
++		.xres = 720,
++		.yres = 1280,
++		.real_xres = 720,
++		.real_yres = 1280,
++		.hsync_len = 2,
++		.left_margin = 30,
++		.right_margin = 146,
++		.vsync_len = 2,
++		.upper_margin = 14,
++		.lower_margin = 16,
++		.invert_pixclock = 0,
++		.pix_fmt_out = PIXFMT_BGR888PACK,
++		.hsync_invert = 0,
++		.vsync_invert = 0,
++		.height = 110,
++		.width = 62,
++	},
++};
++
++static int ili9881_get_modelist(struct mmp_panel *panel,
++		struct mmp_mode **modelist)
++{
++	*modelist = mmp_modes_ili9881;
++	return 1;
++}
++
++static struct mmp_panel panel_ili9881 = {
++	.name = "ili9881",
++	.panel_type = PANELTYPE_DSI_VIDEO,
++	.is_iovdd = 0,
++	.is_avdd = 0,
++	.get_modelist = ili9881_get_modelist,
++	.set_status = ili9881_set_status,
++	.get_status = ili9881_get_status,
++	.panel_esd_recover = ili9881_esd_recover,
++	.esd_set_onoff = ili9881_esd_onoff,
++};
++
++static int ili9881_bl_update_status(struct backlight_device *bl)
++{
++	struct ili9881_plat_data *data = dev_get_drvdata(&bl->dev);
++	struct mmp_panel *panel = data->panel;
++	int level;
++
++	if (bl->props.fb_blank == FB_BLANK_UNBLANK &&
++			bl->props.power == FB_BLANK_UNBLANK)
++		level = bl->props.brightness;
++	else
++		level = 0;
++
++	/* If there is backlight function of board, use it */
++	if (data && data->plat_set_backlight) {
++		data->plat_set_backlight(panel, level);
++		return 0;
++	}
++
++	if (panel && panel->set_brightness)
++		panel->set_brightness(panel, level);
++
++	return 0;
++}
++
++static int ili9881_bl_get_brightness(struct backlight_device *bl)
++{
++	if (bl->props.fb_blank == FB_BLANK_UNBLANK &&
++			bl->props.power == FB_BLANK_UNBLANK)
++		return bl->props.brightness;
++
++	return 0;
++}
++
++static DEFINE_SPINLOCK(bl_lock);
++static void ili9881_panel_set_bl(struct mmp_panel *panel, int intensity)
++{
++	int gpio_bl, bl_level, p_num;
++	unsigned long flags;
++	/*
++	 * FIXME
++	 * the initial value of bl_level_last is the
++	 * uboot backlight level, it should be aligned.
++	 */
++	static int bl_level_last = 17;
++
++	gpio_bl = of_get_named_gpio(panel->dev->of_node, "bl_gpio", 0);
++	if (gpio_bl < 0) {
++		pr_err("%s: of_get_named_gpio failed\n", __func__);
++		return;
++	}
++
++	if (gpio_request(gpio_bl, "lcd backlight")) {
++		pr_err("gpio %d request failed\n", gpio_bl);
++		return;
++	}
++
++	/*
++	 * Brightness is controlled by a series of pulses
++	 * generated by gpio. It has 32 leves and level 1
++	 * is the brightest. Pull low for 3ms makes
++	 * backlight shutdown
++	 */
++	bl_level = (100 - intensity) * 32 / 100 + 1;
++
++	if (bl_level == bl_level_last)
++		goto set_bl_return;
++
++	if (bl_level == 33) {
++		/* shutdown backlight */
++		gpio_direction_output(gpio_bl, 0);
++		goto set_bl_return;
++	}
++
++	if (bl_level > bl_level_last)
++		p_num = bl_level - bl_level_last;
++	else
++		p_num = bl_level + 32 - bl_level_last;
++
++	while (p_num--) {
++		spin_lock_irqsave(&bl_lock, flags);
++		gpio_direction_output(gpio_bl, 0);
++		udelay(1);
++		gpio_direction_output(gpio_bl, 1);
++		spin_unlock_irqrestore(&bl_lock, flags);
++		udelay(1);
++	}
++
++set_bl_return:
++	if (bl_level == 33)
++		bl_level_last = 0;
++	else
++		bl_level_last = bl_level;
++	gpio_free(gpio_bl);
++}
++
++static const struct backlight_ops ili9881_bl_ops = {
++	.get_brightness = ili9881_bl_get_brightness,
++	.update_status  = ili9881_bl_update_status,
++};
++
++/**********************Add by Chenzili**************************************/
++static ssize_t huamobile_lcd_show(struct device *dev, struct device_attribute *attr, char *buff)
++{
++	char *buff_bak = buff;
++	int xres,yres;	
++	struct ili9881_plat_data *plat_data = panel_ili9881.plat_data;
++
++	xres = mmp_modes_ili9881->xres;
++	yres = mmp_modes_ili9881->yres;
++
++	buff += sprintf(buff, "name = %s, width = %d, height = %d\n", plat_data->name, xres, yres);	
++	return buff - buff_bak;
++}
++
++static DEVICE_ATTR(dev_info, S_IRUGO, huamobile_lcd_show, NULL);
++
++extern struct device * huamobile_device_create(const char * class_name);
++static void huamobile_lcd_create_sysfs(void)
++{
++	struct device *	huamobile_class_dev = huamobile_device_create("lcd");
++
++	if (huamobile_class_dev != NULL)
++		device_create_file(huamobile_class_dev, &dev_attr_dev_info);
++}
++/*********************End Add**********************************************/
++static int ili9881_probe(struct platform_device *pdev)
++{
++	struct mmp_mach_panel_info *mi;
++	struct ili9881_plat_data *plat_data;
++	struct device_node *np = pdev->dev.of_node;
++	const char *path_name;
++	const char *panel_name;
++	struct backlight_properties props;
++	struct backlight_device *bl;
++	int ret;
++	u32 esd_enable;
++
++	plat_data = kzalloc(sizeof(*plat_data), GFP_KERNEL);
++	if (!plat_data)
++		return -ENOMEM;
++
++	if (IS_ENABLED(CONFIG_OF)) {
++		ret = of_property_read_string(np, "marvell,path-name",
++				&path_name);
++		if (ret < 0) {
++			kfree(plat_data);
++			return ret;
++		}
++		panel_ili9881.plat_path_name = path_name;
++
++		/*Add By ChenZiLi*/
++		if(of_property_read_string(np, "panel_name", &plat_data->name))
++			return -EINVAL;
++		/*End Add*/
++
++		if (of_find_property(np, "iovdd-supply", NULL))
++			panel_ili9881.is_iovdd = 1;
++
++		if (of_find_property(np, "avdd-supply", NULL))
++			panel_ili9881.is_avdd = 1;
++
++		if (of_property_read_u32(np, "panel_esd", &esd_enable))
++			plat_data->esd_enable = 0;
++
++		plat_data->esd_enable = esd_enable;
++		
++		if (of_get_named_gpio(np, "bl_gpio", 0) < 0)
++			pr_debug("%s: get bl_gpio failed\n", __func__);
++		else
++			plat_data->plat_set_backlight = ili9881_panel_set_bl;
++
++	} else {
++		/* get configs from platform data */
++		mi = pdev->dev.platform_data;
++		if (mi == NULL) {
++			dev_err(&pdev->dev, "no platform data defined\n");
++			kfree(plat_data);
++			return -EINVAL;
++		}
++		plat_data->plat_onoff = mi->plat_set_onoff;
++		panel_ili9881.plat_path_name = mi->plat_path_name;
++		plat_data->plat_set_backlight = mi->plat_set_backlight;
++		plat_data->esd_enable = mi->esd_enable;
++	}
++
++	plat_data->panel = &panel_ili9881;
++	panel_ili9881.plat_data = plat_data;
++	panel_ili9881.dev = &pdev->dev;
++	mmp_register_panel(&panel_ili9881);
++
++	if (plat_data->esd_enable)
++		esd_init(&panel_ili9881);
++
++	huamobile_lcd_create_sysfs(); //Add By ChenZili
++	/*
++	 * if no panel or plat associate backlight control,
++	 * don't register backlight device here.
++	 */
++	if (!panel_ili9881.set_brightness && !plat_data->plat_set_backlight)
++		return 0;
++
++	memset(&props, 0, sizeof(struct backlight_properties));
++	props.max_brightness = 100;
++	props.type = BACKLIGHT_RAW;
++
++	bl = backlight_device_register("lcd-bl", &pdev->dev, plat_data,
++			&ili9881_bl_ops, &props);
++	if (IS_ERR(bl)) {
++		ret = PTR_ERR(bl);
++		dev_err(&pdev->dev, "failed to register lcd-backlight\n");
++		return ret;
++	}
++
++	bl->props.fb_blank = FB_BLANK_UNBLANK;
++	bl->props.power = FB_BLANK_UNBLANK;
++	bl->props.brightness = 40;
++//	huamobile_lcd_create_sysfs(); //Add By ChenZili
++	return 0;
++}
++
++static int ili9881_remove(struct platform_device *dev)
++{
++	mmp_unregister_panel(&panel_ili9881);
++	kfree(panel_ili9881.plat_data);
++
++	return 0;
++}
++
++#ifdef CONFIG_OF
++static const struct of_device_id mmp_ili9881_dt_match[] = {
++	{ .compatible = "marvell,mmp-ili9881_ivo" },
++	{},
++};
++#endif
++
++static struct platform_driver ili9881_driver = {
++	.driver		= {
++		.name	= "mmp-ili9881_ivo",
++		.owner	= THIS_MODULE,
++		.of_match_table = of_match_ptr(mmp_ili9881_dt_match),
++	},
++	.probe		= ili9881_probe,
++	.remove		= ili9881_remove,
++};
++
++static int ili9881_init(void)
++{
++	return platform_driver_register(&ili9881_driver);
++}
++static void ili9881_exit(void)
++{
++	platform_driver_unregister(&ili9881_driver);
++}
++module_init(ili9881_init);
++module_exit(ili9881_exit);
++
++MODULE_AUTHOR("ZiLi Chen <chenzili@hipad.com>");
++MODULE_DESCRIPTION("Panel driver for MIPI panel ILI9881");
++MODULE_LICENSE("GPL");
+Index: kernel/arch/arm64/boot/dts/pxa1908-lj50v00.dts
+===================================================================
+--- kernel/arch/arm64/boot/dts/pxa1908-lj50v00.dts	(revision 9294)
++++ kernel/arch/arm64/boot/dts/pxa1908-lj50v00.dts	(revision 9295)
+@@ -245,6 +245,16 @@
+ 		avdd-supply = <&ldo11>;
+ 		status = "okay";
+ 	};
++    panel9: ili9881_ivo {
++		compatible = "marvell,mmp-ili9881_ivo";
++		marvell,path-name = "mmp_pnpath";
++		panel_esd = <1>;
++		panel_name = "marvell,lcd_ili9881_ivo_zq9077";
++		rst_gpio = <&gpio 20 0>;
++
++		avdd-supply = <&ldo11>;
++		status = "okay";
++	};
+ 	sd8x-rfkill {
+ 		sd-host = <&sdh1>;
+ 		pd-gpio = <&gpio 7 0>;
+Index: bootable/bootloader/uboot/board/Marvell/common/panel.c
+===================================================================
+--- bootable/bootloader/uboot/board/Marvell/common/panel.c	(revision 9294)
++++ bootable/bootloader/uboot/board/Marvell/common/panel.c	(revision 9295)
+@@ -629,9 +629,423 @@
+ };	
+ void ili9881_init_config(struct mmp_disp_info *fbi)
+ {
++    printf("it is cpt ili9881\n");
+ 	dsi_cmd_array_tx(fbi, ili9881_display_on_cmds,
+ 			 ARRAY_SIZE(ili9881_display_on_cmds));
+ }
++
++static u8 ili9881_reg_cmd_ivo_01[] = {0xFF, 0x98, 0x81, 0x03};
++
++//GIP_1
++static u8 ili9881_reg_cmd_ivo_02[] = {0x01, 0x00};
++static u8 ili9881_reg_cmd_ivo_03[] = {0x02, 0x00};
++static u8 ili9881_reg_cmd_ivo_04[] = {0x03, 0x73};
++static u8 ili9881_reg_cmd_ivo_05[] = {0x04, 0x73};
++static u8 ili9881_reg_cmd_ivo_06[] = {0x05, 0x00};
++static u8 ili9881_reg_cmd_ivo_07[] = {0x06, 0x06};
++static u8 ili9881_reg_cmd_ivo_08[] = {0x07, 0x02};
++static u8 ili9881_reg_cmd_ivo_09[] = {0x08, 0x00};
++static u8 ili9881_reg_cmd_ivo_10[] = {0x09, 0x01};
++static u8 ili9881_reg_cmd_ivo_11[] = {0x0a, 0x01};
++static u8 ili9881_reg_cmd_ivo_12[] = {0x0b, 0x01};
++static u8 ili9881_reg_cmd_ivo_13[] = {0x0c, 0x01};
++static u8 ili9881_reg_cmd_ivo_14[] = {0x0d, 0x01};
++static u8 ili9881_reg_cmd_ivo_15[] = {0x0e, 0x01};
++static u8 ili9881_reg_cmd_ivo_16[] = {0x0f, 0x01};
++static u8 ili9881_reg_cmd_ivo_17[] = {0x10, 0x01};
++static u8 ili9881_reg_cmd_ivo_18[] = {0x11, 0x00};
++static u8 ili9881_reg_cmd_ivo_19[] = {0x12, 0x00};
++static u8 ili9881_reg_cmd_ivo_20[] = {0x13, 0x01};
++static u8 ili9881_reg_cmd_ivo_21[] = {0x14, 0x00};
++static u8 ili9881_reg_cmd_ivo_22[] = {0x15, 0x00};
++static u8 ili9881_reg_cmd_ivo_23[] = {0x16, 0x00};   
++static u8 ili9881_reg_cmd_ivo_24[] = {0x17, 0x00};   
++static u8 ili9881_reg_cmd_ivo_25[] = {0x18, 0x00};
++static u8 ili9881_reg_cmd_ivo_26[] = {0x19, 0x00};
++static u8 ili9881_reg_cmd_ivo_27[] = {0x1a, 0x00};
++static u8 ili9881_reg_cmd_ivo_28[] = {0x1b, 0x00};
++static u8 ili9881_reg_cmd_ivo_29[] = {0x1c, 0x00};
++static u8 ili9881_reg_cmd_ivo_30[] = {0x1d, 0x00};
++static u8 ili9881_reg_cmd_ivo_31[] = {0x1e, 0xC0};
++static u8 ili9881_reg_cmd_ivo_32[] = {0x1f, 0x80};
++static u8 ili9881_reg_cmd_ivo_33[] = {0x20, 0x04};
++static u8 ili9881_reg_cmd_ivo_34[] = {0x21, 0x03};
++static u8 ili9881_reg_cmd_ivo_35[] = {0x22, 0x00};
++static u8 ili9881_reg_cmd_ivo_36[] = {0x23, 0x00};
++static u8 ili9881_reg_cmd_ivo_37[] = {0x24, 0x00};
++static u8 ili9881_reg_cmd_ivo_38[] = {0x25, 0x00};
++static u8 ili9881_reg_cmd_ivo_39[] = {0x26, 0x00};
++static u8 ili9881_reg_cmd_ivo_40[] = {0x27, 0x00};
++static u8 ili9881_reg_cmd_ivo_41[] = {0x28, 0x33};
++static u8 ili9881_reg_cmd_ivo_42[] = {0x29, 0x03};
++static u8 ili9881_reg_cmd_ivo_43[] = {0x2a, 0x00};
++static u8 ili9881_reg_cmd_ivo_44[] = {0x2b, 0x00};
++static u8 ili9881_reg_cmd_ivo_45[] = {0x2c, 0x00};
++static u8 ili9881_reg_cmd_ivo_46[] = {0x2d, 0x00};
++static u8 ili9881_reg_cmd_ivo_47[] = {0x2e, 0x00};
++static u8 ili9881_reg_cmd_ivo_48[] = {0x2f, 0x00};
++static u8 ili9881_reg_cmd_ivo_49[] = {0x30, 0x00};
++static u8 ili9881_reg_cmd_ivo_50[] = {0x31, 0x00};
++static u8 ili9881_reg_cmd_ivo_51[] = {0x32, 0x00};
++static u8 ili9881_reg_cmd_ivo_52[] = {0x33, 0x00};   
++static u8 ili9881_reg_cmd_ivo_53[] = {0x34, 0x03};
++static u8 ili9881_reg_cmd_ivo_54[] = {0x35, 0x00};
++static u8 ili9881_reg_cmd_ivo_55[] = {0x36, 0x03};
++static u8 ili9881_reg_cmd_ivo_56[] = {0x37, 0x00};
++static u8 ili9881_reg_cmd_ivo_57[] = {0x38, 0x00};
++static u8 ili9881_reg_cmd_ivo_58[] = {0x39, 0x00};
++static u8 ili9881_reg_cmd_ivo_59[] = {0x3a, 0x00};
++static u8 ili9881_reg_cmd_ivo_60[] = {0x3b, 0x00};
++static u8 ili9881_reg_cmd_ivo_61[] = {0x3c, 0x00};
++static u8 ili9881_reg_cmd_ivo_62[] = {0x3d, 0x00};
++static u8 ili9881_reg_cmd_ivo_63[] = {0x3e, 0x00};
++static u8 ili9881_reg_cmd_ivo_64[] = {0x3f, 0x00};
++static u8 ili9881_reg_cmd_ivo_65[] = {0x40, 0x00};
++static u8 ili9881_reg_cmd_ivo_66[] = {0x41, 0x00};
++static u8 ili9881_reg_cmd_ivo_67[] = {0x42, 0x00};
++static u8 ili9881_reg_cmd_ivo_68[] = {0x43, 0x00};
++static u8 ili9881_reg_cmd_ivo_69[] = {0x44, 0x00};
++
++
++
++static u8 ili9881_reg_cmd_ivo_70[] = {0x50, 0x01};
++static u8 ili9881_reg_cmd_ivo_71[] = {0x51, 0x23};
++static u8 ili9881_reg_cmd_ivo_72[] = {0x52, 0x45};
++static u8 ili9881_reg_cmd_ivo_73[] = {0x53, 0x67};
++static u8 ili9881_reg_cmd_ivo_74[] = {0x54, 0x89};
++static u8 ili9881_reg_cmd_ivo_75[] = {0x55, 0xab};
++static u8 ili9881_reg_cmd_ivo_76[] = {0x56, 0x01};
++static u8 ili9881_reg_cmd_ivo_77[] = {0x57, 0x23};
++static u8 ili9881_reg_cmd_ivo_78[] = {0x58, 0x45};
++static u8 ili9881_reg_cmd_ivo_79[] = {0x59, 0x67};
++static u8 ili9881_reg_cmd_ivo_80[] = {0x5a, 0x89};
++static u8 ili9881_reg_cmd_ivo_81[] = {0x5b, 0xab};
++static u8 ili9881_reg_cmd_ivo_82[] = {0x5c, 0xcd};
++static u8 ili9881_reg_cmd_ivo_83[] = {0x5d, 0xef};  
++
++
++ static u8 ili9881_reg_cmd_ivo_84[] = {0x5e, 0x10};
++ static u8 ili9881_reg_cmd_ivo_85[] = {0x5f, 0x09};
++ static u8 ili9881_reg_cmd_ivo_86[] = {0x60, 0x08};
++ static u8 ili9881_reg_cmd_ivo_87[] = {0x61, 0x0F};
++ static u8 ili9881_reg_cmd_ivo_88[] = {0x62, 0x0E};
++ static u8 ili9881_reg_cmd_ivo_89[] = {0x63, 0x0D};
++ static u8 ili9881_reg_cmd_ivo_90[] = {0x64, 0x0C};
++ static u8 ili9881_reg_cmd_ivo_91[] = {0x65, 0x02};
++ static u8 ili9881_reg_cmd_ivo_92[] = {0x66, 0x02};
++ static u8 ili9881_reg_cmd_ivo_93[] = {0x67, 0x02};
++ static u8 ili9881_reg_cmd_ivo_94[] = {0x68, 0x02};
++ static u8 ili9881_reg_cmd_ivo_95[] = {0x69, 0x02};
++ static u8 ili9881_reg_cmd_ivo_96[] = {0x6a, 0x02};
++ static u8 ili9881_reg_cmd_ivo_97[] = {0x6b, 0x02};
++ static u8 ili9881_reg_cmd_ivo_98[] = {0x6c, 0x02};
++ static u8 ili9881_reg_cmd_ivo_99[] = {0x6d, 0x02};		//VGH pumping ratio 3x
++static u8 ili9881_reg_cmd_ivo_100[] = {0x6e, 0x02};		//VGL pumping ratio 2x
++static u8 ili9881_reg_cmd_ivo_101[] = {0x6f, 0x02};		//VGH clamp 15V
++static u8 ili9881_reg_cmd_ivo_102[] = {0x70, 0x02};		//VGL clamp -10V
++static u8 ili9881_reg_cmd_ivo_103[] = {0x71, 0x06};		//POWER SAVING
++static u8 ili9881_reg_cmd_ivo_104[] = {0x72, 0x07}; 		//RF Improve
++static u8 ili9881_reg_cmd_ivo_105[] = {0x73, 0x02};		//performance enhancement
++static u8 ili9881_reg_cmd_ivo_106[] = {0x74, 0x02};		//performance enhancement
++static u8 ili9881_reg_cmd_ivo_107[] = {0x75, 0x06};		//Performance enhancement
++static u8 ili9881_reg_cmd_ivo_108[] = {0x76, 0x07};		//Performance enhancement
++static u8 ili9881_reg_cmd_ivo_109[] = {0x77, 0x0E};		//Performance enhancement
++static u8 ili9881_reg_cmd_ivo_110[] = {0x78, 0x0F};		//Performance enhancement
++static u8 ili9881_reg_cmd_ivo_111[] = {0x79, 0x0C};		//Performance enhancement
++static u8 ili9881_reg_cmd_ivo_201[] = {0x7a, 0x0D};		//VGH pumping ratio 3x
++static u8 ili9881_reg_cmd_ivo_112[] = {0x7b, 0x02};
++static u8 ili9881_reg_cmd_ivo_113[] = {0x7c, 0x02};	//BGR,SS
++static u8 ili9881_reg_cmd_ivo_114[] = {0x7d, 0x02};	//VCOM1 
++static u8 ili9881_reg_cmd_ivo_115[] = {0x7e, 0x02};	//VCOM2
++static u8 ili9881_reg_cmd_ivo_116[] = {0x7f, 0x02};      //VREG1OUT=4.7V  A3
++static u8 ili9881_reg_cmd_ivo_117[] = {0x80, 0x02};      //VREG2OUT=-4.7V  A3
++static u8 ili9881_reg_cmd_ivo_118[] = {0x81, 0x02};	//column inversion
++static u8 ili9881_reg_cmd_ivo_119[] = {0x82, 0x02};	//ILI4003 pumping clk    
++static u8 ili9881_reg_cmd_ivo_120[] = {0x83, 0x02};	//VP255	Gamma P
++static u8 ili9881_reg_cmd_ivo_121[] = {0x84, 0x02};      //VP251        
++static u8 ili9881_reg_cmd_ivo_122[] = {0x85, 0x02};      //VP247        
++static u8 ili9881_reg_cmd_ivo_123[] = {0x86, 0x02};      //VP243        
++static u8 ili9881_reg_cmd_ivo_124[] = {0x87, 0x09};      //VP239        
++static u8 ili9881_reg_cmd_ivo_125[] = {0x88, 0x08};      //VP231        
++static u8 ili9881_reg_cmd_ivo_126[] = {0x89, 0x02};      //VP219        
++static u8 ili9881_reg_cmd_ivo_127[] = {0x8A, 0x02};      //VP203   
++
++     
++static u8 ili9881_reg_cmd_ivo_128[] = {0xFF, 0x98, 0x81, 0x04};      //VP175        
++static u8 ili9881_reg_cmd_ivo_129[] = {0x6C, 0x15};      //VP144        
++static u8 ili9881_reg_cmd_ivo_130[] = {0x6E, 0x2A};      //VP111        
++static u8 ili9881_reg_cmd_ivo_131[] = {0x6F, 0x57};      //VP80         
++static u8 ili9881_reg_cmd_ivo_132[] = {0x3A, 0xA4};      //VP52      
++static u8 ili9881_reg_cmd_ivo_133[] = {0x8D, 0x1A};      //VP36         
++static u8 ili9881_reg_cmd_ivo_134[] = {0x87, 0xBA};      //VP24         
++static u8 ili9881_reg_cmd_ivo_135[] = {0x26, 0x76};      //VP16         
++static u8 ili9881_reg_cmd_ivo_136[] = {0xB2, 0xD1};      //VP12         
++static u8 ili9881_reg_cmd_ivo_137[] = {0x00, 0x80};      //VP8      
++
++    
++static u8 ili9881_reg_cmd_ivo_138[] = {0xFF, 0x98, 0x81, 0x01};      //VP4          
++static u8 ili9881_reg_cmd_ivo_139[] = {0x22, 0x0A};      //VP0                                                     
++static u8 ili9881_reg_cmd_ivo_140[] = {0x31, 0x00};	//VN255 GAMMA N
++static u8 ili9881_reg_cmd_ivo_141[] = {0x53, 0x2e};      //VN251        
++static u8 ili9881_reg_cmd_ivo_142[] = {0x55, 0x50};      //VN247        
++static u8 ili9881_reg_cmd_ivo_143[] = {0x50, 0xbf};      //VN243        
++static u8 ili9881_reg_cmd_ivo_144[] = {0x51, 0xbf};      //VN239        
++static u8 ili9881_reg_cmd_ivo_145[] = {0x60, 0x06};      //VN231        
++static u8 ili9881_reg_cmd_ivo_146[] = {0x61, 0x00};      //VN219        
++static u8 ili9881_reg_cmd_ivo_147[] = {0x62, 0x2f};      //VN203 
++       
++static u8 ili9881_reg_cmd_ivo_148[] = {0xFF, 0x98, 0x81, 0x01};      //VN175        
++static u8 ili9881_reg_cmd_ivo_149[] = {0xA0, 0x14};      //VN144        
++static u8 ili9881_reg_cmd_ivo_150[] = {0xA1, 0x35};      //VN111        
++static u8 ili9881_reg_cmd_ivo_151[] = {0xA2, 0x49};      //VN80         
++static u8 ili9881_reg_cmd_ivo_152[] = {0xA3, 0x1f};      //VN52        
++static u8 ili9881_reg_cmd_ivo_153[] = {0xA4, 0x1a};      //VN36         
++static u8 ili9881_reg_cmd_ivo_154[] = {0xA5, 0x31};      //VN24         
++static u8 ili9881_reg_cmd_ivo_155[] = {0xA6, 0x26};      //VN16         
++static u8 ili9881_reg_cmd_ivo_156[] = {0xA7, 0x25};      //VN12         
++static u8 ili9881_reg_cmd_ivo_157[] = {0xA8, 0xbc};      //VN8          
++static u8 ili9881_reg_cmd_ivo_158[] = {0xA9, 0x19};      //VN4          
++static u8 ili9881_reg_cmd_ivo_159[] = {0xAA, 0x26};      //VN0  
++static u8 ili9881_reg_cmd_ivo_160[] = {0xAB, 0x90};      //VN144
++static u8 ili9881_reg_cmd_ivo_161[] = {0xAC, 0x18};      //VN111
++static u8 ili9881_reg_cmd_ivo_162[] = {0xAD, 0x16};      //VN80 
++static u8 ili9881_reg_cmd_ivo_163[] = {0xAE, 0x49};      //VN52 
++static u8 ili9881_reg_cmd_ivo_164[] = {0xAF, 0x1f};      //VN36 
++static u8 ili9881_reg_cmd_ivo_165[] = {0xB0, 0x26};      //VN24 
++static u8 ili9881_reg_cmd_ivo_166[] = {0xB1, 0x4d};      //VN16 
++static u8 ili9881_reg_cmd_ivo_167[] = {0xB2, 0x5a};      //VN12 
++static u8 ili9881_reg_cmd_ivo_168[] = {0xB3, 0x26};      //VN8   
++
++static u8 ili9881_reg_cmd_ivo_169[] = {0xC0, 0x12};      //VN4  
++static u8 ili9881_reg_cmd_ivo_170[] = {0xC1, 0x35};      //VN0  
++static u8 ili9881_reg_cmd_ivo_171[] = {0xC2, 0x4a};      //VN144
++static u8 ili9881_reg_cmd_ivo_172[] = {0xC3, 0x1f};      //VN111
++static u8 ili9881_reg_cmd_ivo_173[] = {0xC4, 0x20};      //VN80 
++static u8 ili9881_reg_cmd_ivo_174[] = {0xC5, 0x39};      //VN52 
++static u8 ili9881_reg_cmd_ivo_175[] = {0xC6, 0x2d};      //VN36 
++static u8 ili9881_reg_cmd_ivo_176[] = {0xC7, 0x27};      //VN24 
++static u8 ili9881_reg_cmd_ivo_177[] = {0xC8, 0xda};      //VN16 
++static u8 ili9881_reg_cmd_ivo_178[] = {0xC9, 0x1e};      //VN12 
++static u8 ili9881_reg_cmd_ivo_179[] = {0xCA, 0x2a};      //VN8  
++static u8 ili9881_reg_cmd_ivo_180[] = {0xCB, 0xac};      //VN4  
++static u8 ili9881_reg_cmd_ivo_181[] = {0xCC, 0x1b};      //VN0  
++static u8 ili9881_reg_cmd_ivo_182[] = {0xCD, 0x17};      //VN144
++static u8 ili9881_reg_cmd_ivo_183[] = {0xCE, 0x4d};      //VN111
++static u8 ili9881_reg_cmd_ivo_184[] = {0xCF, 0x23};      //VN80 
++static u8 ili9881_reg_cmd_ivo_185[] = {0xD0, 0x2a};      //VN52 
++static u8 ili9881_reg_cmd_ivo_186[] = {0xD1, 0x53};      //VN36 
++static u8 ili9881_reg_cmd_ivo_187[] = {0xD2, 0x5a};      //VN24 
++static u8 ili9881_reg_cmd_ivo_188[] = {0xD3, 0x20};      //VN16 
++
++
++static u8 ili9881_reg_cmd_ivo_189[] = {0xFF, 0x98, 0x81, 0x00};
++static u8 ili9881_reg_cmd_ivo_190[] = {0x11, 0x00};			//sleep out
++static u8 ili9881_reg_cmd_ivo_191[] = {0x29, 0x00};			//display on
++
++static struct dsi_cmd_desc ili9881_display_on_cmds_ivo[] = {
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_01), ili9881_reg_cmd_ivo_01},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_02), ili9881_reg_cmd_ivo_02},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_03), ili9881_reg_cmd_ivo_03},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_04), ili9881_reg_cmd_ivo_04},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_05), ili9881_reg_cmd_ivo_05},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_06), ili9881_reg_cmd_ivo_06},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_07), ili9881_reg_cmd_ivo_07},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_08), ili9881_reg_cmd_ivo_08},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_09), ili9881_reg_cmd_ivo_09},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_10), ili9881_reg_cmd_ivo_10},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_11), ili9881_reg_cmd_ivo_11},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_12), ili9881_reg_cmd_ivo_12},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_13), ili9881_reg_cmd_ivo_13},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_14), ili9881_reg_cmd_ivo_14},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_15), ili9881_reg_cmd_ivo_15},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_16), ili9881_reg_cmd_ivo_16},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_17), ili9881_reg_cmd_ivo_17},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_18), ili9881_reg_cmd_ivo_18},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_19), ili9881_reg_cmd_ivo_19},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_20), ili9881_reg_cmd_ivo_20},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_21), ili9881_reg_cmd_ivo_21},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_22), ili9881_reg_cmd_ivo_22},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_23), ili9881_reg_cmd_ivo_23},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_24), ili9881_reg_cmd_ivo_24},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_25), ili9881_reg_cmd_ivo_25},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_26), ili9881_reg_cmd_ivo_26},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_27), ili9881_reg_cmd_ivo_27},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_28), ili9881_reg_cmd_ivo_28},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_29), ili9881_reg_cmd_ivo_29},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_30), ili9881_reg_cmd_ivo_30},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_31), ili9881_reg_cmd_ivo_31},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_32), ili9881_reg_cmd_ivo_32},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_33), ili9881_reg_cmd_ivo_33},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_34), ili9881_reg_cmd_ivo_34},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_35), ili9881_reg_cmd_ivo_35},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_36), ili9881_reg_cmd_ivo_36},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_37), ili9881_reg_cmd_ivo_37},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_38), ili9881_reg_cmd_ivo_38},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_39), ili9881_reg_cmd_ivo_39},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_40), ili9881_reg_cmd_ivo_40},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_41), ili9881_reg_cmd_ivo_41},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_42), ili9881_reg_cmd_ivo_42},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_43), ili9881_reg_cmd_ivo_43},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_44), ili9881_reg_cmd_ivo_44},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_45), ili9881_reg_cmd_ivo_45},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_46), ili9881_reg_cmd_ivo_46},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_47), ili9881_reg_cmd_ivo_47},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_48), ili9881_reg_cmd_ivo_48},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_49), ili9881_reg_cmd_ivo_49},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_50), ili9881_reg_cmd_ivo_50},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_51), ili9881_reg_cmd_ivo_51},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_52), ili9881_reg_cmd_ivo_52},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_53), ili9881_reg_cmd_ivo_53},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_54), ili9881_reg_cmd_ivo_54},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_55), ili9881_reg_cmd_ivo_55},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_56), ili9881_reg_cmd_ivo_56},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_57), ili9881_reg_cmd_ivo_57},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_58), ili9881_reg_cmd_ivo_58},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_59), ili9881_reg_cmd_ivo_59},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_60), ili9881_reg_cmd_ivo_60},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_61), ili9881_reg_cmd_ivo_61},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_62), ili9881_reg_cmd_ivo_62},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_63), ili9881_reg_cmd_ivo_63},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_64), ili9881_reg_cmd_ivo_64},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_65), ili9881_reg_cmd_ivo_65},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_66), ili9881_reg_cmd_ivo_66},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_67), ili9881_reg_cmd_ivo_67},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_68), ili9881_reg_cmd_ivo_68},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_69), ili9881_reg_cmd_ivo_69},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_70), ili9881_reg_cmd_ivo_70},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_71), ili9881_reg_cmd_ivo_71},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_72), ili9881_reg_cmd_ivo_72},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_73), ili9881_reg_cmd_ivo_73},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_74), ili9881_reg_cmd_ivo_74},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_75), ili9881_reg_cmd_ivo_75},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_76), ili9881_reg_cmd_ivo_76},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_77), ili9881_reg_cmd_ivo_77},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_78), ili9881_reg_cmd_ivo_78},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_79), ili9881_reg_cmd_ivo_79},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_80), ili9881_reg_cmd_ivo_80},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_81), ili9881_reg_cmd_ivo_81},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_82), ili9881_reg_cmd_ivo_82},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_83), ili9881_reg_cmd_ivo_83},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_84), ili9881_reg_cmd_ivo_84},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_85), ili9881_reg_cmd_ivo_85},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_86), ili9881_reg_cmd_ivo_86},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_87), ili9881_reg_cmd_ivo_87},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_88), ili9881_reg_cmd_ivo_88},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_89), ili9881_reg_cmd_ivo_89},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_90), ili9881_reg_cmd_ivo_90},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_91), ili9881_reg_cmd_ivo_91},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_92), ili9881_reg_cmd_ivo_92},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_93), ili9881_reg_cmd_ivo_93},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_94), ili9881_reg_cmd_ivo_94},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_95), ili9881_reg_cmd_ivo_95},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_96), ili9881_reg_cmd_ivo_96},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_97), ili9881_reg_cmd_ivo_97},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_98), ili9881_reg_cmd_ivo_98},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_99), ili9881_reg_cmd_ivo_99},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_100), ili9881_reg_cmd_ivo_100},
++	
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_101), ili9881_reg_cmd_ivo_101},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_102), ili9881_reg_cmd_ivo_102},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_103), ili9881_reg_cmd_ivo_103},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_104), ili9881_reg_cmd_ivo_104},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_105), ili9881_reg_cmd_ivo_105},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_106), ili9881_reg_cmd_ivo_106},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_107), ili9881_reg_cmd_ivo_107},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_108), ili9881_reg_cmd_ivo_108},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_109), ili9881_reg_cmd_ivo_109},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_110), ili9881_reg_cmd_ivo_110},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_111), ili9881_reg_cmd_ivo_111},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_201), ili9881_reg_cmd_ivo_201},	
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_112), ili9881_reg_cmd_ivo_112},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_113), ili9881_reg_cmd_ivo_113},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_114), ili9881_reg_cmd_ivo_114},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_115), ili9881_reg_cmd_ivo_115},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_116), ili9881_reg_cmd_ivo_116},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_117), ili9881_reg_cmd_ivo_117},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_118), ili9881_reg_cmd_ivo_118},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_119), ili9881_reg_cmd_ivo_119},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_120), ili9881_reg_cmd_ivo_120},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_121), ili9881_reg_cmd_ivo_121},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_122), ili9881_reg_cmd_ivo_122},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_123), ili9881_reg_cmd_ivo_123},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_124), ili9881_reg_cmd_ivo_124},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_125), ili9881_reg_cmd_ivo_125},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_126), ili9881_reg_cmd_ivo_126},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_127), ili9881_reg_cmd_ivo_127},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_128), ili9881_reg_cmd_ivo_128},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_129), ili9881_reg_cmd_ivo_129},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_130), ili9881_reg_cmd_ivo_130},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_131), ili9881_reg_cmd_ivo_131},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_132), ili9881_reg_cmd_ivo_132},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_133), ili9881_reg_cmd_ivo_133},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_134), ili9881_reg_cmd_ivo_134},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_135), ili9881_reg_cmd_ivo_135},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_136), ili9881_reg_cmd_ivo_136},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_137), ili9881_reg_cmd_ivo_137},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_138), ili9881_reg_cmd_ivo_138},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_139), ili9881_reg_cmd_ivo_139},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_140), ili9881_reg_cmd_ivo_140},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_141), ili9881_reg_cmd_ivo_141},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_142), ili9881_reg_cmd_ivo_142},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_143), ili9881_reg_cmd_ivo_143},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_144), ili9881_reg_cmd_ivo_144},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_145), ili9881_reg_cmd_ivo_145},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_146), ili9881_reg_cmd_ivo_146},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_147), ili9881_reg_cmd_ivo_147},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_148), ili9881_reg_cmd_ivo_148},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_149), ili9881_reg_cmd_ivo_149},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_150), ili9881_reg_cmd_ivo_150},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_151), ili9881_reg_cmd_ivo_151},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_152), ili9881_reg_cmd_ivo_152},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_153), ili9881_reg_cmd_ivo_153},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_154), ili9881_reg_cmd_ivo_154},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_155), ili9881_reg_cmd_ivo_155},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_156), ili9881_reg_cmd_ivo_156},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_157), ili9881_reg_cmd_ivo_157},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_158), ili9881_reg_cmd_ivo_158},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_159), ili9881_reg_cmd_ivo_159},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_160), ili9881_reg_cmd_ivo_160},     
++
++
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_161), ili9881_reg_cmd_ivo_161},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_162), ili9881_reg_cmd_ivo_162},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_163), ili9881_reg_cmd_ivo_163},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_164), ili9881_reg_cmd_ivo_164},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_165), ili9881_reg_cmd_ivo_165},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_166), ili9881_reg_cmd_ivo_166},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_167), ili9881_reg_cmd_ivo_167},  	
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_168), ili9881_reg_cmd_ivo_168},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_169), ili9881_reg_cmd_ivo_169},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_170), ili9881_reg_cmd_ivo_170},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_171), ili9881_reg_cmd_ivo_171},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_172), ili9881_reg_cmd_ivo_172},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_173), ili9881_reg_cmd_ivo_173},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_174), ili9881_reg_cmd_ivo_174},  
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_175), ili9881_reg_cmd_ivo_175},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_176), ili9881_reg_cmd_ivo_176},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_177), ili9881_reg_cmd_ivo_177},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_178), ili9881_reg_cmd_ivo_178},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_179), ili9881_reg_cmd_ivo_179},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_180), ili9881_reg_cmd_ivo_180},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_181), ili9881_reg_cmd_ivo_181},  
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_182), ili9881_reg_cmd_ivo_182},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_183), ili9881_reg_cmd_ivo_183},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_184), ili9881_reg_cmd_ivo_184},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_185), ili9881_reg_cmd_ivo_185},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_186), ili9881_reg_cmd_ivo_186},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_187), ili9881_reg_cmd_ivo_187},
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_188), ili9881_reg_cmd_ivo_188},  
++	{DSI_DI_GENERIC_LWRITE,   1,0,sizeof(ili9881_reg_cmd_ivo_189), ili9881_reg_cmd_ivo_189}, 	
++	{DSI_DI_DCS_SWRITE,   1,120,sizeof(ili9881_reg_cmd_ivo_190), ili9881_reg_cmd_ivo_190},
++	{DSI_DI_DCS_SWRITE,   1,150,sizeof(ili9881_reg_cmd_ivo_191), ili9881_reg_cmd_ivo_191},
++	
++};	
++void ili9881_init_config_ivo(struct mmp_disp_info *fbi)
++{
++    printf("it is ivo ili9881\n");
++	dsi_cmd_array_tx(fbi, ili9881_display_on_cmds_ivo,
++			 ARRAY_SIZE(ili9881_display_on_cmds_ivo));
++}
+ static u8 otm8018b_dijin_exit_sleep[] = {0x11};
+ static u8 otm8018b_dijin_display_on[] = {0x29};
+ 
+Index: bootable/bootloader/uboot/board/Marvell/common/panel.h
+===================================================================
+--- bootable/bootloader/uboot/board/Marvell/common/panel.h	(revision 9294)
++++ bootable/bootloader/uboot/board/Marvell/common/panel.h	(revision 9295)
+@@ -21,6 +21,7 @@
+ #define OTM1283A_ID 0x1283
+ #define FL10802_ID 0x307
+ #define ILI9881_720P_ID 0x9881
++#define ILI9881_720P_ID_IVO 0x9881C
+ #define FL11280_720P_ID 0x1821
+ void panel_1080p_init_config(struct mmp_disp_info *fbi);
+ void panel_720p_init_config(struct mmp_disp_info *fbi);
+@@ -34,6 +35,7 @@
+ void otm1283a_init_config(struct mmp_disp_info *fbi);
+ void fl10802_init_config(struct mmp_disp_info *fbi);
+ void ili9881_init_config(struct mmp_disp_info *fbi);
++void ili9881_init_config_ivo(struct mmp_disp_info *fbi);
+ void fl11280_init_config(struct mmp_disp_info *fbi);
+ void hx8394d_init_config(struct mmp_disp_info *fbi);
+ void hx8394d_jt_init_config(struct mmp_disp_info *fbi);
+Index: bootable/bootloader/uboot/board/Marvell/lj50v00/lj50v00.c
+===================================================================
+--- bootable/bootloader/uboot/board/Marvell/lj50v00/lj50v00.c	(revision 9294)
++++ bootable/bootloader/uboot/board/Marvell/lj50v00/lj50v00.c	(revision 9295)
+@@ -565,9 +565,21 @@
+ 	fb->phy_info = &lj50v00_720p_dsi;
+ 
+ 	fb->dsi_panel_config = ili9881_init_config;
+-	fb->panel_manufacturer_id = ILI9881_720P_ID;
++	fb->panel_manufacturer_id = ILI9881_720P_ID; //CPT
+ 
+ }
++void set_ili9881_info_ivo(struct mmp_disp_plat_info *fb)
++{
++
++	fb->sclk_div = 0x0000020c;
++	fb->num_modes = ARRAY_SIZE(video_ili9881_modes);
++	fb->modes = video_ili9881_modes;
++	fb->phy_info = &lj50v00_720p_dsi;
++
++	fb->dsi_panel_config = ili9881_init_config_ivo;
++	fb->panel_manufacturer_id = ILI9881_720P_ID_IVO; //IVO 100k
++
++}
+ void set_fl11280_info(struct mmp_disp_plat_info *fb)
+ {
+ 
+@@ -633,7 +645,10 @@
+ 		break;
+ 	case ILI9881_720P_ID:	
+ 		printf("LCD: it is ili9881 panel\n");
+-		set_ili9881_info(fb);
++        if(lcd_adc_id < 1000)
++		    set_ili9881_info_ivo(fb);
++        else
++		    set_ili9881_info(fb);
+ 		break;	
+ 	case HX8394D_720P_ID:
+ 		printf("LCD: it is hx8394D panel\n");
+@@ -872,21 +887,31 @@
+ 		run_command("fdt rm /hx8394d_jt", 0);	
+ 		run_command("fdt rm /hx8394d", 0);
+ 		run_command("fdt rm /fl11280", 0);
++        run_command("fdt rm /ili9881_ivo", 0);
+ 		run_command("fdt set /soc/axi/dsi marvell,dsi-lanes <4>", 0);
+-	} else if (fb->panel_manufacturer_id == FL11280_720P_ID) {
++	} else if (fb->panel_manufacturer_id == ILI9881_720P_ID_IVO){
+ 		run_command("fdt rm /hx8394d_jt", 0);	
+ 		run_command("fdt rm /hx8394d", 0);
++		run_command("fdt rm /fl11280", 0);
++        run_command("fdt rm /ili9881", 0);
++		run_command("fdt set /soc/axi/dsi marvell,dsi-lanes <4>", 0);
++	}
++    else if (fb->panel_manufacturer_id == FL11280_720P_ID) {
++		run_command("fdt rm /hx8394d_jt", 0);	
++		run_command("fdt rm /hx8394d", 0);
+ 		run_command("fdt rm /ili9881", 0);
+ 		run_command("fdt set /soc/axi/dsi marvell,dsi-lanes <4>", 0);
+ 	}else if (fb->panel_manufacturer_id == HX8394D_720P_ID) {
+ 		run_command("fdt rm /fl11280", 0);
+ 		run_command("fdt rm /ili9881", 0);
++        run_command("fdt rm /ili9881_ivo", 0);
+         run_command("fdt rm /hx8394d_jt", 0);
+ 		run_command("fdt set /soc/axi/dsi marvell,dsi-lanes <4>", 0);
+ 	}else if (fb->panel_manufacturer_id == HX8394D_JT_720P_ID) {
+ 	    run_command("fdt rm /hx8394d", 0);
+ 		run_command("fdt rm /fl11280", 0);
+ 		run_command("fdt rm /ili9881", 0);
++        run_command("fdt rm /ili9881_ivo", 0);
+ 		run_command("fdt set /soc/axi/dsi marvell,dsi-lanes <4>", 0);
+ 	}
+ #endif	
