@@ -1,0 +1,20 @@
+marvell 1908 new project
+
+1、找一个相识的工程，拷贝device/marvell/lj50v00/，修改文件里的工程名为lj50v00; 
+2、找一个相识的工程，拷贝vender/marvell/generic/lte-telephony/cp/lj50v00, 修改copy_cp_image.mk;
+  + ifneq (,$(filter $(TARGET_PRODUCT), lj50v00))
+  + image_list := lj50v00
+  + endif
+3、kernel：修改 kernel/arch/arm64/boot/dts/Makefile
+                dtb-$(CONFIG_ARCH_MMP) += pxa1928concord.dtb pxa1928-psci.dtb pxa1928concord-discrete.dtb \
+							  			  pxa1908-zq9077.dtb 	pxa1908-lj50v00.dtb
+		   添加kernel/arch/arm64/boot/dts/pxa1908-lj50v00.dts
+		       kernel/arch/arm64/config/lj50v00_deconfig
+4、uboot：修改 bootable/bootloader/uboot/boards.cfg
+		+	Active  arm         armv8          pxa1908     Marvell         lj50v00             lj50v00 
+		  添加bootable/bootloader/uboot/include/configs/lj50v00.h
+		      bootable/bootloader/uboot/board/Marvell/lj50v00/
+		      bootable/bootloader/uboot/board/Marvell/lj50v00/lj50v00.c
+		      bootable/bootloader/uboot/board/Marvell/lj50v00/Makefile
+
+		      bootable/bootloader/obm/Loader/Platforms/ULC1/lj50v00.mk
